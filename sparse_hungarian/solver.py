@@ -1,11 +1,28 @@
 from sparse_hungarian.matrix import SparseCostMatrix, _fast_remove
 import numpy as np
+from time import perf_counter
 
+class Timer:
+	"""For logging & improving speed of solver"""
+	def __init__(self):
+		self.log={}
+		self.t0 = perf_counter()
+	def add(self, name):
+		new_t = perf_counter()
+		self.log[name] = self.log.get(name, []) + [new_t-self.t0]
+		self.t0 = new_t
+	def print(self):
+		for k, v in self.log.items():
+			print(f"{k}: {len(v)} @ {np.mean(v) * 1000:.3f}ms = {np.sum(v):.3f}s")
 
 
 class SparseHungarianSolver():
 	def __init__(self, cost_mat):
+		self.timer = Timer()
+		self.step_4_timer = Timer()
+		self.step_5_timer = Timer()
 
+		# TODO: only solves N,M where M >= N. Therefore, pre-transpose if M < N and retranspose after solving
 
 		self.mat = SparseCostMatrix(cost_mat)
 		self.flags = self.mat.flags
@@ -13,9 +30,14 @@ class SparseHungarianSolver():
 
 	def solve(self):
 		step = self.step_1()
+		self.timer.add('setup')
 
 		while step:
+			fname = step.__name__
 			step = step()  # returns either a next function or run, or False
+			self.timer.add(fname)
+
+		self.timer.print()
 
 		return self.mat.get_sol()
 
@@ -42,8 +64,7 @@ class SparseHungarianSolver():
 		If <n_rows> columns are covered, DONE! return False
 		else, Go to step 4"""
 
-		for c in np.nonzero(self.flags.get_cols('starred'))[0]:
-			self.mat.cover(c, 'col')
+		self.mat.bulk_cover(np.nonzero(self.flags.get_cols('starred'))[0], 'col')
 
 		if self.flags.get_cols('covered').sum() == self.mat._r:
 			return False

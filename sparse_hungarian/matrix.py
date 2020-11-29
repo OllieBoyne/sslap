@@ -4,19 +4,32 @@ import numpy as np
 def _fast_append(arr, l):
 	"""Fast algorithm to append element l to 1D ndarray, returning ndarray"""
 	if arr.size < 95:
-		return np.array(arr.tolist() + [l])
+		o = np.array(arr.tolist() + [l], dtype=arr.dtype)
 	else:
-		return np.append(arr, l)
+		o = np.append(arr, l).astype(arr.dtype)
+
+	return o
 
 
 def _fast_remove(arr, l):
 	"""Fast implementation of removing an element l to a 1D array, where both contain unique values"""
-	return np.setdiff1d(arr, l, assume_unique=True)
+	return np.setdiff1d(arr, l, assume_unique=True).astype(arr.dtype)
 
 
-def _empty_lookup(size):
+def select_dtype(n):
+	"""Select dtype to be used for indexing, depending on size of n"""
+	if n < 255:
+		return np.uint8
+	elif n < 65535:
+		return np.uint16
+	elif n < 4294967295:
+		return np.uint32
+	return np.uint64
+
+
+def _empty_lookup(size, dtype=np.uint32):
 	"""Return empty lookup dictionary"""
-	return {s: np.array([]) for s in range(size)}
+	return {s: np.array([], dtype=dtype) for s in range(size)}
 
 
 class SparseMatrixFlag:
@@ -26,12 +39,13 @@ class SparseMatrixFlag:
 	bool of size num_rows with 1 for flag on in that row
 	bool of size num_cols with 1 for flag on in that col"""
 
-	def __init__(self, flag_name, num_rows, num_cols, use_lookup=True, use_bool=True):
+	def __init__(self, flag_name, num_rows, num_cols, use_lookup=True, use_bool=True,
+				 row_lookup_dtype=np.uint32, col_lookup_dtype=np.uint32):
 		self.flag_name = flag_name
 
 		# save computation time by storing empty lookup dict
-		self.empty_row_lookup = _empty_lookup(num_rows)
-		self.empty_col_lookup = _empty_lookup(num_cols)
+		self.empty_row_lookup = _empty_lookup(num_rows, dtype=row_lookup_dtype)
+		self.empty_col_lookup = _empty_lookup(num_cols, dtype=col_lookup_dtype)
 
 		self.row_lookup, self.col_lookup = self.empty_row_lookup.copy(), self.empty_col_lookup.copy()
 		self.row_bool, self.col_bool = np.zeros(num_rows, dtype=np.bool), np.zeros(num_cols, dtype=np.bool)
@@ -46,11 +60,19 @@ class SparseMatrixFlag:
 		elif axis == 'col':
 			self.col_lookup = data
 
-	def lookup(self, idx, axis='row'):
-		if axis == 'row':
-			return self.row_lookup[idx]
-		elif axis == 'col':
-			return self.col_lookup[idx]
+	def lookup(self, idx, axis='row', as_flat=False):
+		"""Return indices in lookup table.
+		as_flat: return in flat idx notation (row * num_rows + col)"""
+		if not as_flat:
+			if axis == 'row':
+				return self.row_lookup[idx]
+			elif axis == 'col':
+				return self.col_lookup[idx]
+		if as_flat:
+			if axis == 'row':
+				return idx * self.num_rows + self.row_lookup[idx]
+			elif axis == 'col':
+				return self.col_lookup[idx] * self.num_rows + idx
 
 	def get_rows(self):
 		return self.row_bool
@@ -136,7 +158,7 @@ class SparseFlagManager():
 		pass
 
 	@flag_manager_wrap
-	def lookup(self, name, idx, axis='row'):
+	def lookup(self, name, idx, axis='row', as_flat=False):
 		pass
 
 	@flag_manager_wrap
@@ -177,6 +199,9 @@ class SparseCostMatrix():
 		self.costs = cost_mat
 		self._r, self._c = cost_mat.shape
 
+		# get dtype of lookup tables, based on number of elements in rows/cols
+		self.dtype = select_dtype(self._r * self._c)  # for flattened format, highest element = r * c
+
 		# Set up sparsely defined flags
 		self.flags = SparseFlagManager(num_rows=self._r, num_cols=self._c)
 		self.flags.add_flag("valid", use_bool=False)  # flag to mark if an element can be picked
@@ -187,13 +212,13 @@ class SparseCostMatrix():
 
 		# set lookup of valid entries for each row & col
 		valid_mat = (cost_mat >= 0)
-		self.flags.set_lookup('valid', {r: np.nonzero(valid_mat[r])[0] for r in range(self._r)}, 'row')
-		self.flags.set_lookup('valid', {c: np.nonzero(valid_mat[:, c])[0] for c in range(self._c)}, 'col')
+		self.flags.set_lookup('valid', {r: np.nonzero(valid_mat[r])[0].astype(self.dtype) for r in range(self._r)}, 'row')
+		self.flags.set_lookup('valid', {c: np.nonzero(valid_mat[:, c])[0].astype(self.dtype) for c in range(self._c)}, 'col')
 
 		# set lookup of entries = 0 for each row & col
 		is_zero = (cost_mat == 0)
-		self.flags.set_lookup('zero', {r: np.nonzero(is_zero[r])[0] for r in range(self._r)}, 'row')
-		self.flags.set_lookup('zero', {c: np.nonzero(is_zero[:, c])[0] for c in range(self._c)}, 'col')
+		self.flags.set_lookup('zero', {r: np.nonzero(is_zero[r])[0].astype(self.dtype) for r in range(self._r)}, 'row')
+		self.flags.set_lookup('zero', {c: np.nonzero(is_zero[:, c])[0].astype(self.dtype) for c in range(self._c)}, 'col')
 
 		# setup set of all uncovered zeros, stored in flat, row major idxs ((1,0) = 1, (1,1) = 2)
 		nz_rows, nz_cols = np.nonzero(is_zero)
@@ -287,8 +312,27 @@ class SparseCostMatrix():
 		# remove from uncovered zeros, add to covered zeros
 		zero_idxs = self.flags.lookup('zero', idx, axis)
 		flat_zero_idxs = self.flatten_idxs(idx, zero_idxs) if axis == 'row' else self.flatten_idxs(zero_idxs, idx)
+
 		self.uncovered_zeros.difference_update(flat_zero_idxs)
 		self.covered_zeros.update(flat_zero_idxs)
+
+	def bulk_cover(self, idxs, axis='row'):
+		"""Cover all row/cols provided by idxs. Bulk remove newly covered zeros from uncovered_zeros"""
+
+		if idxs.size == 0:
+			return None
+
+		if axis == 'row':
+			self.flags.get_rows('covered')[idxs] = 1
+		elif axis == 'col':
+			self.flags.get_cols('covered')[idxs] = 1
+
+		# update covered zeros for each index
+		for idx in idxs:
+			self.covered_zeros.update(self.flags.lookup('zero', idx, axis, as_flat=True))
+
+		# remove all covered zeros from uncovered zeros
+		self.uncovered_zeros.difference_update(self.covered_zeros)
 
 	def uncover(self, idx, axis='row'):
 		"""Uncover row/col, add all newly uncovered zeros to uncovered_zeros"""
@@ -335,7 +379,6 @@ class SparseCostMatrix():
 		"""Get the smallest valid value NOT in a covered row or column.
 		NOTE: Inefficent?"""
 		minval = 1e10
-
 		for r in np.nonzero(~self.flags.get_rows('covered'))[0]:  # for each uncovered row
 			colidxs = self.flags.lookup('valid', r, 'row')  # get all valid columns idxs
 			colidxs = colidxs[~self.flags.get_cols('covered')[colidxs]]  # only keep column idxs that ARENT covered
