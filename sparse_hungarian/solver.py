@@ -4,40 +4,49 @@ from time import perf_counter
 
 class Timer:
 	"""For logging & improving speed of solver"""
-	def __init__(self):
-		self.log={}
-		self.t0 = perf_counter()
-	def add(self, name):
+	def __init__(self, cats):
+		self.log = {c: {} for c in cats}
+		self.time = {c: perf_counter() for c in cats}
+
+	def add(self, cat, name):
+		assert cat in self.log, f"Timer category {cat} not found."
 		new_t = perf_counter()
-		self.log[name] = self.log.get(name, []) + [new_t-self.t0]
-		self.t0 = new_t
+		self.log[cat][name] = self.log[cat].get(name, []) + [new_t-self.time[cat]]
+		self.time[cat] = perf_counter()
+
 	def print(self):
-		for k, v in self.log.items():
-			print(f"{k}: {len(v)} @ {np.mean(v) * 1000:.3f}ms = {np.sum(v):.3f}s")
+		for c, cat_log in self.log.items():
+			print(f"----- {c} -----")
+			for k, v in cat_log.items():
+				print(f"{k}: {len(v)} @ {np.mean(v) * 1000:.3f}ms = {np.sum(v):.3f}s")
 
 
 class SparseHungarianSolver():
-	def __init__(self, cost_mat):
-		self.timer = Timer()
-		self.step_4_timer = Timer()
-		self.step_5_timer = Timer()
-
+	def __init__(self, cost_mat, debug=False):
 		# TODO: only solves N,M where M >= N. Therefore, pre-transpose if M < N and retranspose after solving
 
 		self.mat = SparseCostMatrix(cost_mat)
 		self.flags = self.mat.flags
 		self.last_primed = None  # memory for previous primed element
 
+		self.debug = debug
+		if debug:
+			self.timer = Timer(['steps', 's4', 's3', 's5'])
+
 	def solve(self):
 		step = self.step_1()
-		self.timer.add('setup')
+		if self.debug:
+			self.timer.add('steps', 'setup')
 
 		while step:
 			fname = step.__name__
 			step = step()  # returns either a next function or run, or False
-			self.timer.add(fname)
 
-		self.timer.print()
+			if self.debug:
+				self.timer.add('steps', fname)
+
+		if self.debug:
+			self.timer.print()
 
 		return self.mat.get_sol()
 
@@ -129,11 +138,9 @@ class SparseHungarianSolver():
 
 			if starred_zeros_in_column.size == 0:  # i)
 				break
-
 			# ii)
 			last_starred = (starred_zeros_in_column[0], last_primed[1])
 			starred.append(last_starred)
-
 			primed_in_row = self.flags.lookup('prime', last_starred[0], 'row')
 			assert primed_in_row.size == 1, "Unexpected primed_in_row_cols size."
 			last_primed = (last_starred[0], primed_in_row[0])

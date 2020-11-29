@@ -7,5 +7,5 @@ if __name__ == "__main__":
 	cost_matrix = np.random.randint(1, 10, (600, 600))
 	cost_matrix[np.random.randn(*cost_matrix.shape) > 0] = -1  # make sparse
 
-	solver = SparseHungarianSolver(cost_matrix)
+	solver = SparseHungarianSolver(cost_matrix, debug=True)
 	R, C = solver.solve()

@@ -310,9 +310,7 @@ class SparseCostMatrix():
 			self.flags.get_cols('covered')[idx] = 1
 
 		# remove from uncovered zeros, add to covered zeros
-		zero_idxs = self.flags.lookup('zero', idx, axis)
-		flat_zero_idxs = self.flatten_idxs(idx, zero_idxs) if axis == 'row' else self.flatten_idxs(zero_idxs, idx)
-
+		flat_zero_idxs = set(self.flags.lookup('zero', idx, axis, as_flat=True))
 		self.uncovered_zeros.difference_update(flat_zero_idxs)
 		self.covered_zeros.update(flat_zero_idxs)
 
@@ -357,16 +355,15 @@ class SparseCostMatrix():
 		"""On uncover all, clear flags, and move all covered zeros to uncovered"""
 		self.flags.clear('covered')
 		self.uncovered_zeros.update(self.covered_zeros)
-		self.covered_zeros = set()
+		self.covered_zeros.clear()
 
-	def get_uncovered_zero(self, f=False):
+	def get_uncovered_zero(self):
 		"""Returns first uncovered zero found"""
 		# once an uncovered zero has been used in step 4, it will *always* be covered or starred, so
 		# popping here is acceptable
 		try:
 			flat = self.uncovered_zeros.pop()
-			r, c = flat // self._c, flat % self._c
-			return r, c
+			return flat // self._c, flat % self._c
 		except KeyError:
 			return False
 
