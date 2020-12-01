@@ -1,31 +1,60 @@
 cimport cython
-cimport numpy as np
 import numpy as np
+cimport numpy as np
+from time import perf_counter
 
 np.import_array()
 
 # tolerance to deal with floating point precision for eCE, due to eps being stored as float 32
 cdef float tol = 1e-7
 
-# @cython.boundscheck(False)  # Deactivate bounds checking
-# @cython.wraparound(False)   # Deactivate negative indexing.
-cdef np.ndarray get_top_two(np.ndarray arr):
-	# Return indices of top and second top item
-	cdef int topidxs[2], i
-	cdef np.ndarray top2
+# ctypedef np.int_t DTYPE_t
+cdef DTYPE = np.float
+ctypedef np.float_t DTYPE_t
 
-	if arr.size == 1:
-		return np.array([0, -1]) # only one index, so top two are [0, -1]
+@cython.boundscheck(False)
+@cython.wraparound(False)
+@cython.nonecheck(False)
+cdef (int, double) eval_choices(np.ndarray[DTYPE_t, ndim=1, mode="c"] v):
+	"""Given a set of values v, return the index j, of the maximum, and the value w of the second largest value
+	 Special cases: len(v) == 0 -> (0, -inf)
+	 """
+	cdef size_t j
+	cdef double second_largest, largest, vi
+	cdef double* arrptr = <double*> v.data
+	cdef size_t idx
+	j = 0
+	largest = v[0]
+	second_largest = - np.inf
+	for idx in range(1, v.size):
+		vi = arrptr[idx]
+		if vi > largest:
+			j = idx
+			largest = vi
 
-	elif arr.size == 2:
-		top2 = np.array([0, 1])
-	else:
-		top2 = np.argpartition(-arr, 2)[:2] # top 2 indices in unsorted order
+		elif vi > second_largest:
+			second_largest = vi
 
-	if arr[top2[0]] >= arr[top2[1]]:
-		return top2 # in correct order, so return as such
+	return j, second_largest
 
-	return top2[::-1] # otherwise flip order
+@cython.boundscheck(False)
+@cython.wraparound(False)
+@cython.nonecheck(False)
+cdef size_t argmax(np.ndarray[DTYPE_t, ndim=1, mode="c"] v):
+	"""Returns index of largest element in v, with preference to earlier idxs if two idxs are equally large"""
+	cdef size_t i
+	cdef double largest, vi
+	cdef double* arrptr = <double*> v.data
+	cdef size_t idx
+	j = 0
+	largest = v[0]
+	for idx in range(1, v.size):
+		vi = arrptr[idx]
+		if vi > largest:
+			j = idx
+			largest = vi
+	return j
+
 
 cdef class AuctionSolver:
 	#Solver for auction problem
@@ -55,15 +84,16 @@ cdef class AuctionSolver:
 	cdef int optimal_soln_found
 	cdef public dict meta
 	cdef float extreme
-
+	cdef float debug_timer
 
 	cdef np.ndarray a
 	cdef np.ndarray b # bids
 
-	def __init__(self, np.ndarray loc, np.ndarray val, int num_rows=0, int num_cols=0, str problem='min',
-				 int max_iter=200):
-		N = num_rows if num_rows != 0 else loc[:, 0].max() + 1
-		M = num_cols if num_rows != 0 else loc[:, 1].max() + 1
+	def __init__(self, np.ndarray[np.int_t, ndim=2] loc, np.ndarray[DTYPE_t, ndim=1] val,
+				 size_t  num_rows=0, size_t num_cols=0, str problem='min',
+				 int max_iter=200, float eps_start=0):
+		cdef size_t N = num_rows if num_rows != 0 else loc[:, 0].max() + 1
+		cdef size_t M = num_cols if num_rows != 0 else loc[:, 1].max() + 1
 		self.num_rows = N
 		self.num_cols = M
 
@@ -74,7 +104,7 @@ cdef class AuctionSolver:
 		self.unassigned_people = set(np.arange(N))
 
 		# set up price vector j
-		self.p = np.zeros(M, dtype=np.float32)
+		self.p = np.zeros(M, dtype=DTYPE)
 
 		# person i -> ndarray of all objects they can bid on
 		self.lookup_by_person = {i: loc[:, 1][loc[:, 0]==i] for i in range(N)}
@@ -90,30 +120,38 @@ cdef class AuctionSolver:
 		self.object_to_person = np.full(M, dtype=np.int, fill_value=-1)
 
 		# to save system memory, make v ndarray an empty, and only populate used elements
-		self.a = np.empty((N, M), dtype=np.float32)
+		self.a = np.empty((N, M), dtype=DTYPE)
 		cdef int mult = -1 if problem == 'min' else 1 # need to flip the values if min vs max
 		self.a[loc[:, 0], loc[:, 1]] = mult * val * self.num_rows
 
-		self.b = np.empty((N, M), dtype=np.float32)
+		self.b = np.empty((N, M), dtype=DTYPE)
 
 		# Calculate optimum initial eps and target eps
 		cdef float C  # = max |aij| for all i, j in A(i)
 		cdef int approx_ints # Esimated
 		C = np.abs(val).max()
 
-
 		# choose eps values
-		self.eps = 10 # C/2
+		self.eps = C/2
 		self.target_eps = 1/(min(N, M))
+
+		# override if given
+		if eps_start > 0:
+			self.eps = eps_start
 
 		self.optimal_soln_found = False
 		self.meta = {'eCE':True, 'its':0, 'soln_found':True, 'n_assigned':0}
+
+		self.debug_timer = 0
 
 	cpdef np.ndarray solve(self):
 		# then, reduce eps while rebidding/assigning
 		while True:
 			while len(self.unassigned_people) > 0:
+				# t0 = perf_counter()
 				self.bidding_phase()
+				# t1 = perf_counter()
+				# self.debug_timer += t1-t0
 				self.assignment_phase()
 				self.nits += 1
 
@@ -135,53 +173,70 @@ cdef class AuctionSolver:
 		self.meta['n_assigned'] = self.num_rows - len(self.unassigned_people)
 		self.meta['obj'] = self.get_obj()
 		self.meta['final_eps'] = self.eps
+		self.meta['debug_timer'] = f"{1000 * self.debug_timer:.2f}ms"
 
 		return self.person_to_object
 
 	cdef int terminate(self):
 		return (self.nits >= self.max_iter) or ((len(self.unassigned_people) == 0) and self.is_optimal())
 
+	@cython.boundscheck(False)
+	@cython.wraparound(False)
 	cdef void bidding_phase(self):
+		cdef size_t i, jbestloc, jbest2loc, jbestglob
+		cdef np.ndarray[DTYPE_t, ndim=1] aij, vi, prices
+		cdef np.ndarray[np.int_t, ndim=1] j
+		cdef float vbest, bbest, wi
+
+		# memory slices for all arrays that will only have one element indexed
+		cdef double[:, :] b = self.b
+
 		for i in self.unassigned_people: # person, i
 			j = self.lookup_by_person[i] # objects j that this person can bid on
+
+			# t0 = perf_counter()
 			aij = self.a[i, j]
-			vi = aij - self.p[j]  # current value (actual val - price) for each object
-			jbestloc, jbest2loc = get_top_two(vi)  # idxs of best two, indexed FROM j, not globally
+			# t1 = perf_counter()
+			# self.debug_timer += t1-t0
+
+			prices = self.p[j]			# get prices for these objects
+
+			vi = aij - prices  # current value (actual val - price) for each object
+			jbestloc, wi = eval_choices(vi)  # idx of largest, value of second largest
 
 			vbest = vi[jbestloc]
-
-			if jbest2loc == -1: # if no 'second best' found in set, bid infinite
-				bbest = np.inf
-
-			else:
-				wi = vi[jbest2loc]
-				bbest = aij[jbestloc] - wi + self.eps
-
+			bbest = aij[jbestloc] - wi + self.eps
 			jbestglob = j[jbestloc]  # index of best j in global idxing
 
 			# store bid & its value
-			self.b[i, jbestglob] = bbest
+			b[i, jbestglob] = bbest
 			self.bid_by_object[jbestglob].append(i)
 
 	cdef void assignment_phase(self):
 		cdef tuple tup
+		cdef list bidding_i
+		cdef np.ndarray[DTYPE_t, ndim=1] bids
+		cdef int ibestloc, ibestglob
+		cdef double[:] p = self.p
+
 		for j in range(self.num_cols): #self.objects_in_market: #
 			bidding_i = self.bid_by_object[j]
-
 			if len(bidding_i) > 0:
+				bids = self.b[bidding_i, j]
+				ibestloc = argmax(bids) # index of highest bidder in bidder list
 
-				ibest = bidding_i[np.argmax(self.b[bidding_i, j])]  # highest bidding person of all bidders wins the bid
-				self.p[j] = self.b[ibest, j]  # update price to reflect new bid
+				ibestglob = bidding_i[ibestloc]  # highest bidding person of all bidders wins the bid
+				p[j] = bids[ibestloc]  # update price to reflect new bid
 
 				# assign ibest to j
-				self.assign_pairing(ibest, j)
+				self.assign_pairing(ibestglob, j)
 
 			# clear bids
 			self.bid_by_object[j] = []
 
-
-	cdef void assign_pairing(self, int i, int j):
+	cdef void assign_pairing(self, size_t i, size_t j):
 		"""Assign person i to object j"""
+		cdef int prev_i
 		# unassign previous i (if any)
 		prev_i = self.object_to_person[j]
 		if prev_i != -1:
@@ -238,17 +293,18 @@ cdef class AuctionSolver:
 		return obj / self.num_rows
 
 
-cpdef AuctionSolver from_matrix(np.ndarray mat, str problem='min'):
+cpdef AuctionSolver from_matrix(np.ndarray mat, str problem='min', float eps_start=0,
+								int max_iter = 100):
 	# Return an Auction Solver from a dense matrix (M, N), where invalid values are -1
 	cdef np.ndarray loc, val
 
 	rows, cols = np.nonzero(mat>=0)
 	loc = np.zeros((rows.size, 2), dtype=np.int)
-	val = np.zeros(rows.size, np.int)
+	val = np.zeros(rows.size, dtype=DTYPE)
 
 	for i in range(rows.size):
 		loc[i, 0] = rows[i]
 		loc[i, 1] = cols[i]
 		val[i] = mat[rows[i], cols[i]]
 
-	return AuctionSolver(loc, val, problem=problem)
+	return AuctionSolver(loc, val, problem=problem, eps_start=eps_start, max_iter=max_iter)
