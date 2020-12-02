@@ -13,75 +13,7 @@ cdef float tol = 1e-7
 # ctypedef np.int_t DTYPE_t
 cdef DTYPE = np.float
 ctypedef np.float_t DTYPE_t
-
 cdef float inf = float('infinity')
-
-
-@cython.boundscheck(False)
-@cython.wraparound(False)
-@cython.nonecheck(False)
-cdef size_t argmax(np.ndarray[DTYPE_t, ndim=1, mode="c"] v):
-	"""Returns index of largest element in v, with preference to earlier idxs if two idxs are equally large"""
-	cdef size_t i
-	cdef double largest, vi
-	cdef double* arrptr = <double*> v.data
-	cdef size_t idx
-	j = 0
-	largest = v[0]
-	for idx in range(1, v.size):
-		vi = arrptr[idx]
-		if vi > largest:
-			j = idx
-			largest = vi
-	return j
-
-@cython.boundscheck(False)
-@cython.wraparound(False)
-@cython.nonecheck(False)
-cdef dict populate_dict(np.ndarray[np.int_t, ndim=1] source, np.ndarray[np.int_t, ndim=1] sink,
-						size_t size, int source_is_sorted=False):
-	"""Returns a dictionary which maps, for all i < size, where i are the possible indexes in source, all
-	the corresponding values in sink. It is equivalent (but much faster) than the dictionary comprehension:
-	{i: sink[source == i] for in range(N)}
-	
-	Gains some further speed improvements if source is pre-sorted
-	"""
-	cdef dict result = {}
-	cdef size_t current_i, i, start_idx, stop_idx, idx, v, N
-	cdef list l
-
-	cdef np.ndarray[np.int_t, ndim=1] sorted_source, sorted_sink
-	cdef np.ndarray[long long, ndim=1] sorted_idxs
-
-	if not source_is_sorted:
-		# sort source if not sorted
-		sorted_idxs = source.argsort()
-		source = source[sorted_idxs]
-		sink = sink[sorted_idxs]
-
-	# pointers for quicker access
-	cdef int[:] sourcemv = source
-	cdef int[:] sinkmv = sink
-
-	N = source.size  # number of elements
-	# go through each element in source, utilising the fact it will be sorted, eg 0, 0, 0, ..., 1, 1, 1, ...
-	# to make a dict of source : sink, by slicing source every time a new value is reached
-	current_i = source[0]  # the current source value
-	start_idx, stop_idx = 0, 0
-	for idx in range(N): # for each element in source
-		i = sourcemv[idx]
-		if i != current_i: # onto new index
-			result[current_i] = sink[start_idx:stop_idx] # save all sink values for current source value
-			current_i += 1 # increment to next source value
-			start_idx = stop_idx
-
-		stop_idx += 1
-
-	# deal with last i not being considered
-	result[current_i] = sink[start_idx:]
-
-
-	return result
 
 
 @cython.boundscheck(False)
@@ -104,7 +36,6 @@ cdef np.ndarray[np.int_t, ndim=1] cumulative_idxs(np.ndarray[np.int_t, ndim=1] a
 
 	out[value+1] = i # add on last value's stop
 	return out
-
 
 
 cdef class AuctionSolver:
@@ -431,14 +362,3 @@ cpdef AuctionSolver from_matrix(np.ndarray mat, str problem='min', float eps_sta
 	val = mat[locs]
 
 	return AuctionSolver(loc, val, problem=problem, eps_start=eps_start, max_iter=max_iter)
-
-@cython.boundscheck(False)
-cpdef np.ndarray[long long, ndim=1] test_func(size_t N):
-	# adds up all numbers and their square from 1 -> N
-	cdef int i
-	cdef np.ndarray[long long, ndim=1] out = np.zeros(N, dtype=np.int64)
-	cdef long long[:] mv = out
-	for i in prange(N, nogil=True):
-		mv[i] = i**2
-
-	return out
