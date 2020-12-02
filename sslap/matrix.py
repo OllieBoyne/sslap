@@ -39,9 +39,8 @@ class SparseMatrixFlag:
 	bool of size num_rows with 1 for flag on in that row
 	bool of size num_cols with 1 for flag on in that col"""
 
-	def __init__(self, flag_name, num_rows, num_cols, use_lookup=True, use_bool=True,
+	def __init__(self, num_rows, num_cols, use_lookup=True, use_bool=True,
 				 row_lookup_dtype=np.uint32, col_lookup_dtype=np.uint32):
-		self.flag_name = flag_name
 
 		# save computation time by storing empty lookup dict
 		self.empty_row_lookup = _empty_lookup(num_rows, dtype=row_lookup_dtype)
@@ -197,28 +196,29 @@ class SparseCostMatrix():
 		self.dtype = cost_mat.dtype
 
 		self.costs = cost_mat
+		r, c = cost_mat.shape
 		self._r, self._c = cost_mat.shape
 
 		# get dtype of lookup tables, based on number of elements in rows/cols
 		self.dtype = select_dtype(self._r * self._c)  # for flattened format, highest element = r * c
 
 		# Set up sparsely defined flags
-		self.flags = SparseFlagManager(num_rows=self._r, num_cols=self._c)
-		self.flags.add_flag("valid", use_bool=False)  # flag to mark if an element can be picked
-		self.flags.add_flag("zero", use_bool=False)  # flag to mark if element is zero
-		self.flags.add_flag("starred", use_bool=True)  # flag if zero is currently part of solution
-		self.flags.add_flag("covered", use_lookup=False, use_bool=True)  # flag for if row/column is covered
-		self.flags.add_flag("prime", use_bool=False)  # flag for if zero is 'primed' (next to be made starred)
+		# self.flags = SparseFlagManager(num_rows=self._r, num_cols=self._c)
+		self.valid = SparseMatrixFlag(r,c, use_bool=False)  # flag to mark if an element can be picked
+		self.zeros = SparseMatrixFlag(r,c, use_bool=False)  # flag to mark if element is zero
+		self.starred = SparseMatrixFlag(r,c, use_bool=True)  # flag if zero is currently part of solution
+		self.covered = SparseMatrixFlag(r,c, use_lookup=False, use_bool=True)  # flag for if row/column is covered
+		self.primed = SparseMatrixFlag(r,c, use_bool=False)  # flag for if zero is 'primed' (next to be made starred)
 
 		# set lookup of valid entries for each row & col
 		valid_mat = (cost_mat >= 0)
-		self.flags.set_lookup('valid', {r: np.nonzero(valid_mat[r])[0].astype(self.dtype) for r in range(self._r)}, 'row')
-		self.flags.set_lookup('valid', {c: np.nonzero(valid_mat[:, c])[0].astype(self.dtype) for c in range(self._c)}, 'col')
+		self.valid.set_lookup({r: np.nonzero(valid_mat[r])[0].astype(self.dtype) for r in range(self._r)}, 'row')
+		self.valid.set_lookup({c: np.nonzero(valid_mat[:, c])[0].astype(self.dtype) for c in range(self._c)}, 'col')
 
 		# set lookup of entries = 0 for each row & col
 		is_zero = (cost_mat == 0)
-		self.flags.set_lookup('zero', {r: np.nonzero(is_zero[r])[0].astype(self.dtype) for r in range(self._r)}, 'row')
-		self.flags.set_lookup('zero', {c: np.nonzero(is_zero[:, c])[0].astype(self.dtype) for c in range(self._c)}, 'col')
+		self.zeros.set_lookup({r: np.nonzero(is_zero[r])[0].astype(self.dtype) for r in range(self._r)}, 'row')
+		self.zeros.set_lookup({c: np.nonzero(is_zero[:, c])[0].astype(self.dtype) for c in range(self._c)}, 'col')
 
 		# setup set of all uncovered zeros, stored in flat, row major idxs ((1,0) = 1, (1,1) = 2)
 		nz_rows, nz_cols = np.nonzero(is_zero)
@@ -234,7 +234,7 @@ class SparseCostMatrix():
 		Note: if val > row/column minimum, this will result in negative values left in matrix.
 		Shouldn't cause issues, as these idxs are stored in all lookups as 'zero'.
 		"""
-		valid_idxs = self.flags.lookup('valid', idx, axis)
+		valid_idxs = self.valid.lookup(idx, axis)
 		if valid_idxs.size == 0: return  # end if no valid entries in line
 
 		rows = idx if axis == 'row' else valid_idxs
@@ -242,13 +242,13 @@ class SparseCostMatrix():
 
 		# if adding, need to remove all zeros from tracking
 		if val > 0:
-			zero_idxs = self.flags.lookup('zero', idx, axis)
+			zero_idxs = self.zeros.lookup(idx, axis)
 
 			for e in zero_idxs:
 				r = e if axis=='col' else idx
 				c = e if axis=='row' else idx
 				# clear zero
-				self.flags.clear_elem('zero', r, c)
+				self.zeros.clear_elem(r, c)
 
 				# remove from both sets
 				self.covered_zeros.difference_update({self._c * r + c})
@@ -263,10 +263,10 @@ class SparseCostMatrix():
 				r = e if axis=='col' else idx
 				c = e if axis=='row' else idx
 				# store zero
-				self.flags.set_elem('zero', r, c)
+				self.zeros.set_elem(r, c)
 
 				# add zero to uncovered/covered set. This can all be made much faster
-				is_covered = self.flags.get_rows('covered')[r] or self.flags.get_cols('covered')[c]
+				is_covered = self.covered.get_rows()[r] or self.covered.get_cols()[c]
 				set_to_join = self.covered_zeros if is_covered else self.uncovered_zeros
 				set_to_join.update({self._c * r + c})
 
@@ -279,20 +279,20 @@ class SparseCostMatrix():
 	def reduce_rows(self):
 		"""Reduce every row by its minimum valid value"""
 		for r in range(self._r):
-			minval = self.costs[r, self.flags.lookup('valid', r, 'row')].min()
+			minval = self.costs[r, self.valid.lookup(r, 'row')].min()
 			self.add_to(r, -minval, 'row')
 
 	def reduce_cols(self):
 		"""Reduce every row by its minimum valid value"""
 		for c in range(self._c):
-			minval = self.costs[self.flags.lookup('valid', c, 'col'), c].min()
+			minval = self.costs[self.valid.lookup(c, 'col'), c].min()
 			self.add_to(c, -minval, 'col')
 
 	def get(self, idx, axis='row'):
 		if axis == 'col':
-			return self.costs[self.flags.lookup('valid', idx, 'col'), idx]
+			return self.costs[self.valid.lookup(idx, 'col'), idx]
 		else:
-			return self.costs[idx, self.flags.lookup('valid', idx, 'row')]
+			return self.costs[idx, self.valid.lookup(idx, 'row')]
 
 	def count_zeros(self, idx, axis='row'):
 		return np.count_nonzero(self.get(idx, axis) == 0)
@@ -305,12 +305,12 @@ class SparseCostMatrix():
 	def cover(self, idx, axis='row'):
 		"""Cover row/col, remove newly covered zeros from uncovered_zeros"""
 		if axis == 'row':
-			self.flags.get_rows('covered')[idx] = 1
+			self.covered.get_rows()[idx] = 1
 		elif axis == 'col':
-			self.flags.get_cols('covered')[idx] = 1
+			self.covered.get_cols()[idx] = 1
 
 		# remove from uncovered zeros, add to covered zeros
-		flat_zero_idxs = set(self.flags.lookup('zero', idx, axis, as_flat=True))
+		flat_zero_idxs = set(self.zeros.lookup(idx, axis, as_flat=True))
 		self.uncovered_zeros.difference_update(flat_zero_idxs)
 		self.covered_zeros.update(flat_zero_idxs)
 
@@ -321,13 +321,13 @@ class SparseCostMatrix():
 			return None
 
 		if axis == 'row':
-			self.flags.get_rows('covered')[idxs] = 1
+			self.covered.get_rows()[idxs] = 1
 		elif axis == 'col':
-			self.flags.get_cols('covered')[idxs] = 1
+			self.covered.get_cols()[idxs] = 1
 
 		# update covered zeros for each index
 		for idx in idxs:
-			self.covered_zeros.update(self.flags.lookup('zero', idx, axis, as_flat=True))
+			self.covered_zeros.update(self.zeros.lookup(idx, axis, as_flat=True))
 
 		# remove all covered zeros from uncovered zeros
 		self.uncovered_zeros.difference_update(self.covered_zeros)
@@ -335,15 +335,15 @@ class SparseCostMatrix():
 	def uncover(self, idx, axis='row'):
 		"""Uncover row/col, add all newly uncovered zeros to uncovered_zeros"""
 		if axis == 'row':
-			self.flags.get_rows('covered')[idx] = 0
+			self.covered.get_rows()[idx] = 0
 		elif axis == 'col':
-			self.flags.get_cols('covered')[idx] = 0
+			self.covered.get_cols()[idx] = 0
 
 		# add to uncovered zeros, remove from covered zeros
-		zero_idxs = self.flags.lookup('zero', idx, axis)  # all zeros in axis
+		zero_idxs = self.zeros.lookup(idx, axis)  # all zeros in axis
 
 		# of those zeros, ones in which the opposite axis is also uncovered
-		opp_axis_covered = self.flags.get_rows('covered') if axis=='col' else self.flags.get_cols('covered')
+		opp_axis_covered = self.covered.get_rows() if axis=='col' else self.covered.get_cols()
 		uncovered_zeros = zero_idxs[~opp_axis_covered[zero_idxs]]
 
 		# convert to flattened form
@@ -353,7 +353,7 @@ class SparseCostMatrix():
 
 	def uncover_all(self):
 		"""On uncover all, clear flags, and move all covered zeros to uncovered"""
-		self.flags.clear('covered')
+		self.covered.clear()
 		self.uncovered_zeros.update(self.covered_zeros)
 		self.covered_zeros.clear()
 
@@ -370,15 +370,15 @@ class SparseCostMatrix():
 	def is_zero_alone(self, r, c):
 		"""Given a zero at pos (r,c) returns True if this zero is the only one in its row & column"""
 		assert self.costs[r, c] == 0, "is_zero_alone called for an element that is not zero."
-		return (self.flags.lookup('zero', r, 'row').size == 1) and (self.flags.lookup('zero', c, 'col').size == 1)
+		return (self.zeros.lookup(r, 'row').size == 1) and (self.zeros.lookup(c, 'col').size == 1)
 
 	def get_min_uncovered(self):
 		"""Get the smallest valid value NOT in a covered row or column.
 		NOTE: Inefficent?"""
 		minval = 1e10
-		for r in np.nonzero(~self.flags.get_rows('covered'))[0]:  # for each uncovered row
-			colidxs = self.flags.lookup('valid', r, 'row')  # get all valid columns idxs
-			colidxs = colidxs[~self.flags.get_cols('covered')[colidxs]]  # only keep column idxs that ARENT covered
+		for r in np.nonzero(~self.covered.get_rows())[0]:  # for each uncovered row
+			colidxs = self.valid.lookup(r, 'row')  # get all valid columns idxs
+			colidxs = colidxs[~self.covered.get_cols()[colidxs]]  # only keep column idxs that ARENT covered
 			if colidxs.size > 0:
 				minval = min(minval, self.costs[r, colidxs].min())
 		assert minval != 1e10, "This matrix is infeasible. No solution found."
@@ -386,10 +386,9 @@ class SparseCostMatrix():
 
 	def get_sol(self):
 		"""When solveable, return R (_r,), C (_c) assignments"""
-		# slow, might need to revisit
 		R, C = np.zeros(self._r, dtype=np.int32), np.zeros(self._r, dtype=np.int32)
 		for row in range(self._r):  # for each row
-			col = self.flags.lookup('starred', row, 'row')  # col in which zero is
+			col = self.starred.lookup(row, 'row')  # col in which zero is
 			R[row], C[row] = row, col
 
 		return R, C
@@ -397,16 +396,16 @@ class SparseCostMatrix():
 	def __repr__(self):
 		out = ""
 		row_format = "{:>5}" * (self._c + 1)  # 5 chars per col
-		out += row_format.format("", *[" C"[i] for i in self.flags.get_cols('covered')])
+		out += row_format.format("", *[" C"[i] for i in self.covered.get_cols()])
 		nfmt = 'int' if 'int' in self.dtype.name else 'float'
 		for r in range(self._r):
-			line = [" C"[self.flags.get_rows('covered')[r]]]
+			line = [" C"[self.covered.get_rows()[r]]]
 			for c in range(self._c):
-				if c in self.flags.lookup('valid', r, 'row'):
+				if c in self.valid.lookup(r, 'row'):
 					v = f"{self.costs[r, c]:.1f}" if nfmt is float else self.costs[r, c]
 					if self._c * r + c in self.uncovered_zeros:
 						v = f".{v}"
-					line += [f"{v}{'*' * (c in self.flags.lookup('starred',r,'row'))}{'′' * (c in self.flags.lookup('prime',r,'row'))}"]
+					line += [f"{v}{'*' * (c in self.starred.lookup(r,'row'))}{'′' * (c in self.primed.lookup(r,'row'))}"]
 				else:
 					line += ["-"]
 

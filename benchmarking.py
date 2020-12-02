@@ -5,7 +5,7 @@ from matplotlib import pyplot as plt
 
 import pyximport
 pyximport.install(setup_args=dict(include_dirs=[np.get_include()]), language_level=3)
-from sparse_hungarian.auction import from_matrix as auction_from_matrix
+from sslap.auction import from_matrix as auction_from_matrix
 from scipy.optimize import linear_sum_assignment
 
 from tqdm import tqdm
@@ -115,7 +115,4 @@ def evaluate_by_size(*funcs, sizes=100, densities=1.):
 
 
 if __name__ == '__main__':
-	# evaluate_by_size(scipy_solve, auction_solve, sizes= 10 ** np.arange(4), densities=0.1)
-	# evaluate_by_size(scipy_solve, auction_solve, sizes=1000, densities=1.3**-np.arange(15))
-	evaluate_by_size(scipy_solve, auction_solve, sizes=2500, densities= np.arange(50) / 2500 )
-# 0.2 * 1.3 ** -np.arange(15))
+	evaluate_by_size(scipy_solve, auction_solve, sizes= (10 * 1.5 ** np.arange(20)).astype(np.int), densities=0.05)
