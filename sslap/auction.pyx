@@ -49,6 +49,7 @@ cdef class AuctionSolver:
 	cdef dict lookup_by_object
 
 	cdef long[:] i_starts_stops, flat_j, j_counts
+	cdef double[:] valmv  # memory view of all values
 	cdef np.ndarray person_to_object # index i gives the object, j, owned by person i
 	cdef np.ndarray object_to_person # index j gives the person, i, who owns object j
 
@@ -66,8 +67,6 @@ cdef class AuctionSolver:
 	cdef float extreme
 	cdef dict debug_timer
 
-	cdef np.ndarray a
-	cdef np.ndarray b # bids
 
 	def __init__(self, np.ndarray[np.int_t, ndim=2] loc, np.ndarray[DTYPE_t, ndim=1] val,
 				 size_t  num_rows=0, size_t num_cols=0, str problem='min',
@@ -95,7 +94,8 @@ cdef class AuctionSolver:
 		self.i_starts_stops = cumulative_idxs(loc[:, 0], N)
 
 		# number of indices per val in list of sorted rows (eg [0,0,1,1,1,2] -> [2, 3, 1])
-		self.j_counts = np.diff(self.i_starts_stops)
+		cdef np.ndarray[np.int_t, ndim=1] jcounts = np.diff(self.i_starts_stops)
+		self.j_counts = jcounts
 
 		# indices of all j values, to be indexed by self.i_starts_stops
 		self.flat_j = loc[:, 1]
@@ -104,13 +104,11 @@ cdef class AuctionSolver:
 		self.object_to_person = np.full(M, dtype=np.int, fill_value=-1)
 
 		# to save system memory, make v ndarray an empty, and only populate used elements
-		self.a = np.empty((N, M), dtype=DTYPE)
 		if problem == 'min':
 			val *= -1 # auction algorithm always maximises, so flip value signs for min problem
 
-		self.a[loc[:, 0], loc[:, 1]] = val * (self.num_rows+1)
-
-		self.b = np.empty((N, M), dtype=DTYPE)
+		cdef np.ndarray[DTYPE_t, ndim=1] v = (val * (self.num_rows+1))
+		self.valmv = v
 
 		# Calculate optimum initial eps and target eps
 		cdef float C  # = max |aij| for all i, j in A(i)
@@ -183,8 +181,6 @@ cdef class AuctionSolver:
 		cdef size_t i, jbestloc, jbest2loc, jbestglob, nbidder, idx
 		cdef np.ndarray[DTYPE_t, ndim=1] prices, aij
 		cdef float vbest, bbest, wi, vi
-		cdef double[:, :] b = self.b
-		cdef double[:, :] a = self.a
 		cdef long[:] j
 
 		# store bids made by each person, stored in sequential order in which bids are made
@@ -203,21 +199,22 @@ cdef class AuctionSolver:
 
 		# each person now makes a bid:
 		cdef np.ndarray[np.int_t, ndim=1] unassigned_people = np.fromiter(self.unassigned_people, dtype=np.int)
+		cdef int[:] unassigned_people_mv = unassigned_people
 		cdef size_t n_unassigned = unassigned_people.size
 
 		for nbidder in range(n_unassigned):
-			i = unassigned_people[nbidder]
+			i = unassigned_people_mv[nbidder]
 			j = self.get_biddable_objects(i)
 			count = self.get_num_biddable_objects(i)
 
 			# go through each object, storing its index & value if vi is largest, and value if vi is second largest
-			arow_mv = a[i]
+			arow_mv = self.get_object_costs(i)
 			jbestloc = 0
 			vbest = - inf
 			wi = - inf
 
 			for idx in range(count):
-				vi = arow_mv[j[idx]] - p_ptr[j[idx]]
+				vi = arow_mv[idx] - p_ptr[j[idx]]
 				if vi > vbest:
 					jbestloc = idx
 					vbest = vi
@@ -226,7 +223,7 @@ cdef class AuctionSolver:
 					wi = vi
 
 			jbestglob = j[jbestloc]  # index of best j in global idxing
-			bbest = arow_mv[jbestglob] - wi + self.eps
+			bbest = arow_mv[jbestloc] - wi + self.eps
 
 			# store bid & its value
 			bidders_ptr[nbidder] = i
@@ -240,7 +237,7 @@ cdef class AuctionSolver:
 		cdef double[:] best_bids_mv = best_bids
 		cdef long[:] best_bidders_mv = best_bidders
 		cdef double val
-		cdef size_t jbid
+		cdef size_t jbid, n
 
 		for n in range(B):  # for each bid made,
 			i = bidders_ptr[n]
@@ -303,9 +300,18 @@ cdef class AuctionSolver:
 		j = self.flat_j[jbounds[0]:jbounds[1]]
 		return j
 
-	cdef size_t get_num_biddable_objects(self, size_t i):
+	cdef double[:] get_object_costs(self, size_t i):
+		"""Return memory view of all costs of biddable objects for a given person i"""
+		cdef long[:] jbounds
+		cdef double[:] vals
+		jbounds = self.i_starts_stops[i:i+2] # start and stop of biddable objects
+		vals = self.valmv[jbounds[0]:jbounds[1]]
+		return vals
+
+	cdef long get_num_biddable_objects(self, size_t i):
 		"""Return the number of objects that will be returned. Faster than len(self.get_biddable_objects(i))"""
-		cdef long N = self.j_counts[i]
+		cdef long[:] j_counts = self.j_counts
+		cdef long N = j_counts[i]
 		return N
 
 	cdef int eCE_satisfied(self, float eps=0.):
@@ -317,7 +323,6 @@ cdef class AuctionSolver:
 		cdef size_t i, j, kidx, count
 		cdef double row_max_val, val
 		cdef long[:] k
-		cdef double[:, :] a = self.a
 		cdef double[:] p = self.p
 		cdef double[:] arow
 
@@ -325,12 +330,11 @@ cdef class AuctionSolver:
 			j = self.person_to_object[i]
 			k = self.get_biddable_objects(i)
 			count = len(k)
-
-			arow = a[i]
+			arow = self.get_object_costs(i)
 
 			row_max_val = - np.inf
 			for kidx in range(count):
-				val = arow[kidx] - p[kidx]
+				val = arow[kidx] - p[k[kidx]]
 				if val > row_max_val:
 					row_max_val = val
 
@@ -343,7 +347,21 @@ cdef class AuctionSolver:
 	cdef float get_obj(self):
 		"""Returns current objective value of assignments"""
 		cdef float obj
-		obj = self.a[np.arange(self.num_rows), self.person_to_object].sum()
+		cdef size_t i, j, jlocidx, counts, idx
+		cdef long[:] js
+		cdef double[:] vs
+		for i in range(self.num_rows):
+			# due to the way data is stored, need to go do some searching to find the corresponding value
+			# to assignment i -> j
+			j = self.person_to_object[i] # chosen j
+			js = self.get_biddable_objects(i)
+			vs = self.get_object_costs(i)
+			counts = self.get_num_biddable_objects(i)
+			for idx in range(counts):
+				if js[idx] == j:
+					obj += vs[idx]
+					break
+
 		if self.problem is 'min':
 			obj *= -1
 
