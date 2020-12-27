@@ -41,36 +41,22 @@ cdef np.ndarray[np.int_t, ndim=1] cumulative_idxs(np.ndarray[np.int_t, ndim=1] a
 @cython.boundscheck(False)
 @cython.wraparound(False)
 @cython.nonecheck(False)
-cdef int* fill_neg1_int(size_t N):
+cdef int* fill_int(size_t N, int v):
 	"""Return a 1D (N,) array fill with -1 (int)"""
 	cdef int* out = <int *> malloc(N*cython.sizeof(int))
 	cdef int i
 	for i in range(N):
-		out[i] = -1
+		out[i] = v
 	return out
 
 @cython.boundscheck(False)
 @cython.wraparound(False)
 @cython.nonecheck(False)
-cdef double* fill_neg1_float(size_t N):
+cdef double* fill_float(size_t N, double v):
 	"""Return a 1D (N,) array fill with -1 (floaT)"""
 	cdef double* out = <double *> malloc(N*cython.sizeof(double))
 	for i in range(N):
-		out[i] = -1
-	return out
-
-@cython.boundscheck(False)
-@cython.wraparound(False)
-@cython.nonecheck(False)
-cdef int* int_set_to_array(set data):
-	"""Convert set of integers to ordered allocated memory array"""
-	cdef size_t N = len(data)
-	cdef int* out = <int *> malloc(N*cython.sizeof(int))
-	cdef size_t ctr = 0
-	cdef int i
-	for i in data:
-		out[ctr] = i
-		ctr = ctr + 1
+		out[i] = v
 	return out
 
 @cython.boundscheck(False)
@@ -124,7 +110,7 @@ cdef class AuctionSolver:
 	cdef dict lookup_by_person
 	cdef dict lookup_by_object
 
-	cdef np.ndarray i_starts_stops, j_counts, flat_j
+	cdef np.ndarray i_starts_stops, flat_j, j_counts
 	cdef np.ndarray val  # memory view of all values
 	cdef np.ndarray person_to_object # index i gives the object, j, owned by person i
 	cdef np.ndarray object_to_person # index j gives the person, i, who owns object j
@@ -187,7 +173,7 @@ cdef class AuctionSolver:
 
 		# to save system memory, make v ndarray an empty, and only populate used elements
 		if problem == 'min':
-			val *= -1 # auction algorithm always maximises, so flip value signs for min problem
+			val = -val # auction algorithm always maximises, so flip value signs for min problem
 
 		cdef np.ndarray[DTYPE_t, ndim=1] v = (val * (self.num_rows+1))
 		self.val = v
@@ -212,9 +198,9 @@ cdef class AuctionSolver:
 		self.empty_N_floats = np.full(N, dtype=DTYPE, fill_value=-1)
 
 		# store of best bids & bidders
-		self.best_bids = fill_neg1_float(M)
-		self.best_bidders = fill_neg1_int(M)
-		self.best_bidded_objects = fill_neg1_int(M)
+		self.best_bids = fill_float(M, -1)
+		self.best_bidders = fill_int(M, -1)
+		self.best_bidded_objects = fill_int(M, -1)
 
 		self.num_unassigned = N
 		self.unassigned_people = arange(N)
@@ -268,7 +254,7 @@ cdef class AuctionSolver:
 
 	@cython.boundscheck(False)
 	@cython.wraparound(False)
-	cdef tuple bid_and_assign(self):
+	cdef void bid_and_assign(self):
 		cdef int i, j, jbest, nbidder, idx
 		cdef double costbest, vbest, bbest, wi, vi, cost
 
@@ -278,9 +264,9 @@ cdef class AuctionSolver:
 		cdef int* unassigned_people = self.unassigned_people
 		cdef int* person_to_assignment_idx = self.person_to_assignment_idx
 
-		cdef int* bidders = fill_neg1_int(num_bidders)
-		cdef int* objects_bidded = fill_neg1_int(num_bidders)
-		cdef double* bids = fill_neg1_float(num_bidders)
+		cdef int* bidders = fill_int(num_bidders, -1)
+		cdef int* objects_bidded = fill_int(num_bidders, -1)
+		cdef double* bids = fill_float(num_bidders, -1)
 		cdef size_t num_objects, glob_idx, start
 
 		cdef double* p = <double*> self.p.data
@@ -294,16 +280,11 @@ cdef class AuctionSolver:
 
 		## BIDDING PHASE
 		# each person now makes a bid:
-
 		for nbidder in range(num_bidders): # for each person
 			i = unassigned_people[nbidder]
 			num_objects = j_counts[i]  # the number of objects this person is able to bid on
 			start = i_starts_stops[i]  # in flattened index format, the starting index of this person's objects/values
-			# Start with vbest, costbest etc defined as first available object
-			glob_idx = start
-			jbest = flat_j[glob_idx]
-			cost = val[glob_idx]
-			vbest = - cost - p[jbest]
+			vbest = - inf
 			wi = - inf  # set second best vi, 'wi', to be -inf by default (if only one object)
 			# Go through each object, storing its index & cost if vi is largest, and value if vi is second largest
 			for idx in range(num_objects):
@@ -311,7 +292,7 @@ cdef class AuctionSolver:
 				j = flat_j[glob_idx]
 				cost = val[glob_idx]
 				vi = cost - p[j]
-				if vi >= vbest:
+				if vi >= vbest or idx == 0: # if best so far (or first entry)
 					jbest = j
 					wi = vbest # store current vbest as second best, wi
 					vbest = vi
@@ -326,7 +307,6 @@ cdef class AuctionSolver:
 			bidders[nbidder] = i
 			bids[nbidder] = bbest
 			objects_bidded[nbidder] = jbest
-
 
 		cdef double* best_bids = self.best_bids
 		cdef int* best_bidders = self.best_bidders
@@ -462,6 +442,7 @@ cdef class AuctionSolver:
 		cdef long[:] flat_j = self.flat_j
 		cdef double[:] val = self.val
 
+		cdef int maximize = self.problem=='max'
 
 		for i in range(self.num_rows):
 			# due to the way data is stored, need to go do some searching to find the corresponding value
@@ -477,10 +458,10 @@ cdef class AuctionSolver:
 				glob_idx = start + idx
 				l = flat_j[glob_idx]
 				if l == j:
-					obj += val[glob_idx]
-
-		if self.problem is 'min':
-			obj *= -1
+					if maximize:
+						obj += val[glob_idx]
+					else:
+						obj -= val[glob_idx]
 
 		return obj / (self.num_rows+1)
 

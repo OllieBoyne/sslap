@@ -115,7 +115,7 @@ def evaluate(*funcs, sizes=100, densities=1., mode='float', name='example'):
 			xdata.append(val)
 
 		for k, v in data.items():
-			ax.plot(xdata, 1000*np.array(v), "-o", label=k, ms=2.)
+			ax.plot(xdata, 1000*np.array(v), "-o", label=k.replace("_", " ").title(), ms=2.)
 
 	# axis formatting
 	ax.set_xlabel(xaxis.title())
