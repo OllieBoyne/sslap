@@ -44,7 +44,6 @@ cdef np.ndarray[np.int_t, ndim=1] cumulative_idxs(np.ndarray[np.int_t, ndim=1] a
 cdef int* fill_neg1_int(size_t N):
 	"""Return a 1D (N,) array fill with -1 (int)"""
 	cdef int* out = <int *> malloc(N*cython.sizeof(int))
-	cdef int v = -1
 	cdef int i
 	for i in range(N):
 		out[i] = -1
@@ -74,6 +73,43 @@ cdef int* int_set_to_array(set data):
 		ctr = ctr + 1
 	return out
 
+@cython.boundscheck(False)
+@cython.wraparound(False)
+@cython.nonecheck(False)
+cdef int* arange(size_t N):
+	"""Return a 1D (N,) array with integers 0 -> N"""
+	cdef int* out = <int *> malloc(N*cython.sizeof(int))
+	cdef int i
+	for i in range(N):
+		out[i] = i
+	return out
+
+cdef void push_all_left(int* data, int* mapper, int num_ints, size_t size):
+	"""Given an array of positive integers (size <size>) and -1s, arrange so that all positive integers are at the start of the array.
+	Provided with N (number of positive integers) for speed increase.
+	eg [-1, 1, 2, 3, -1, -1] -> [3, 1, 2, -1, -1, -1] (order not important).
+	Also updates mapper in tandem, a 1d array in which the ith idx gives the position of integer i in the array data.
+	All modifications are inplace."""
+
+	if num_ints == 0:
+		return
+
+	cdef int ctr, i
+	cdef int left_track = 0 # cursor on left hand side of partition
+	cdef int right_track = num_ints # cursor on right hand side of partition
+	while left_track < num_ints: # keep going until found all N components
+		if data[left_track] == -1: # if empty space
+			# move through right track until hit a positive integer (or the end of the array)
+			while data[right_track] == -1 and right_track < size:
+				right_track += 1
+
+			# swap two elements
+			i = data[right_track] # integer taken through
+			data[left_track] = i
+			data[right_track] = -1
+			mapper[i] = left_track
+
+		left_track += 1
 
 cdef class AuctionSolver:
 	#Solver for auction problem
@@ -89,7 +125,7 @@ cdef class AuctionSolver:
 	cdef dict lookup_by_object
 
 	cdef np.ndarray i_starts_stops, j_counts, flat_j
-	cdef double[::1] val  # memory view of all values
+	cdef np.ndarray val  # memory view of all values
 	cdef np.ndarray person_to_object # index i gives the object, j, owned by person i
 	cdef np.ndarray object_to_person # index j gives the person, i, who owns object j
 
@@ -109,13 +145,18 @@ cdef class AuctionSolver:
 
 	cdef double* best_bids
 	cdef int* best_bidders
+	cdef int* best_bidded_objects
+
+	# assignment storage
 	cdef int num_unassigned
+	cdef int* unassigned_people
+	cdef int* person_to_assignment_idx
 
 	def __init__(self, np.ndarray[np.int_t, ndim=2] loc, np.ndarray[DTYPE_t, ndim=1] val,
 				 size_t  num_rows=0, size_t num_cols=0, str problem='min',
 				 size_t max_iter=1000000, float eps_start=0):
 
-		self.debug_timer = {'bidding_and_assigning':0, 'setup':0, 'forbids':0}
+		self.debug_timer = {'bidding_and_assigning':0, 'setup':0, 'forbids':0, 'misc':0}
 		t0 = perf_counter()
 
 		cdef size_t N = loc[:, 0].max() + 1
@@ -173,7 +214,11 @@ cdef class AuctionSolver:
 		# store of best bids & bidders
 		self.best_bids = fill_neg1_float(M)
 		self.best_bidders = fill_neg1_int(M)
+		self.best_bidded_objects = fill_neg1_int(M)
+
 		self.num_unassigned = N
+		self.unassigned_people = arange(N)
+		self.person_to_assignment_idx = arange(N)
 
 		self.optimal_soln_found = False
 		self.meta = {}
@@ -183,10 +228,7 @@ cdef class AuctionSolver:
 		"""Run iterative steps of Auction assignment algorithm"""
 
 		while True:
-			t0 = perf_counter()
 			self.bid_and_assign()
-			t1 = perf_counter()
-			self.debug_timer['bidding_and_assigning'] += t1-t0
 			self.nits += 1
 
 			if self.terminate():
@@ -200,9 +242,13 @@ cdef class AuctionSolver:
 				self.eps = self.eps*self.theta
 				self.k += 1
 
+				# reset all trackers of people and objects
 				self.person_to_object[:] = -1
 				self.object_to_person[:] = -1
 				self.num_unassigned = self.num_rows
+				self.unassigned_people = arange(self.num_rows)
+				self.person_to_assignment_idx = arange(self.num_rows)
+
 				self.nreductions += 1
 
 		# Finished, validate soln
@@ -223,108 +269,129 @@ cdef class AuctionSolver:
 	@cython.boundscheck(False)
 	@cython.wraparound(False)
 	cdef tuple bid_and_assign(self):
-
-		cdef int i, j, jbest, bidder_ctr, idx
+		cdef int i, j, jbest, nbidder, idx
 		cdef double costbest, vbest, bbest, wi, vi, cost
 
 		# store bids made by each person, stored in sequential order in which bids are made
 		cdef size_t N = self.num_cols
 		cdef size_t num_bidders = self.num_unassigned # len(self.unassigned_people)  # number of bids to be made
+		cdef int* unassigned_people = self.unassigned_people
+		cdef int* person_to_assignment_idx = self.person_to_assignment_idx
 
 		cdef int* bidders = fill_neg1_int(num_bidders)
 		cdef int* objects_bidded = fill_neg1_int(num_bidders)
 		cdef double* bids = fill_neg1_float(num_bidders)
-		cdef double* p_ptr = <double*> self.p.data
 		cdef size_t num_objects, glob_idx, start
 
+		cdef double* p = <double*> self.p.data
 		cdef long* j_counts = <long*> self.j_counts.data
 		cdef long* i_starts_stops = <long*> self.i_starts_stops.data
 		cdef long* flat_j = <long*> self.flat_j.data
-		cdef double[::1] val = self.val
+		cdef double* val = <double*> self.val.data
 
-		cdef int[::1] p2o = self.person_to_object
-		cdef int[::1] o2p = self.object_to_person
+		cdef int* person_to_object = <int*> self.person_to_object.data
+		cdef int* object_to_person = <int*> self.object_to_person.data
 
 		## BIDDING PHASE
 		# each person now makes a bid:
-		bidder_ctr = 0
-		for i in range(N): # for each person
-			if p2o[i] == -1:  # if this person has not been assigned
-				num_objects = j_counts[i]  # the number of objects this person is able to bid on
-				start = i_starts_stops[i]  # in flattened index format, the starting index of this person's objects/values
-				# Start with vbest, costbest etc defined as first available object
-				glob_idx = start
-				jbest = flat_j[glob_idx]
+
+		for nbidder in range(num_bidders): # for each person
+			i = unassigned_people[nbidder]
+			num_objects = j_counts[i]  # the number of objects this person is able to bid on
+			start = i_starts_stops[i]  # in flattened index format, the starting index of this person's objects/values
+			# Start with vbest, costbest etc defined as first available object
+			glob_idx = start
+			jbest = flat_j[glob_idx]
+			cost = val[glob_idx]
+			vbest = - cost - p[jbest]
+			wi = - inf  # set second best vi, 'wi', to be -inf by default (if only one object)
+			# Go through each object, storing its index & cost if vi is largest, and value if vi is second largest
+			for idx in range(num_objects):
+				glob_idx = start + idx
+				j = flat_j[glob_idx]
 				cost = val[glob_idx]
-				vbest = - cost - p_ptr[jbest]
-				wi = - inf  # set second best vi, 'wi', to be -inf by default (if only one object)
-				# Go through each object, storing its index & cost if vi is largest, and value if vi is second largest
-				for idx in range(num_objects):
-					glob_idx = start + idx
-					j = flat_j[glob_idx]
-					cost = val[glob_idx]
-					vi = cost - p_ptr[j]
-					if vi >= vbest:
-						jbest = j
-						wi = vbest # store current vbest as second best, wi
-						vbest = vi
-						costbest = cost
+				vi = cost - p[j]
+				if vi >= vbest:
+					jbest = j
+					wi = vbest # store current vbest as second best, wi
+					vbest = vi
+					costbest = cost
 
-					elif vi > wi:
-						wi = vi
+				elif vi > wi:
+					wi = vi
 
-				bbest = costbest - wi + self.eps  # value of new bid
+			bbest = costbest - wi + self.eps  # value of new bid
 
-				# store bid & its value
-				bidders[bidder_ctr] = i
-				bids[bidder_ctr] = bbest
-				objects_bidded[bidder_ctr] = jbest
-				bidder_ctr += 1
+			# store bid & its value
+			bidders[nbidder] = i
+			bids[nbidder] = bbest
+			objects_bidded[nbidder] = jbest
 
 
 		cdef double* best_bids = self.best_bids
 		cdef int* best_bidders = self.best_bidders
+		cdef int* best_bidded_objects = self.best_bidded_objects
 		cdef double bid_val
-		cdef size_t jbid, n
+		cdef size_t jbid, n, num_successful_bids
 
+
+		num_successful_bids = 0 # counter of how many succesful bids
 		for n in range(num_bidders):  # for each bid made,
 			i = bidders[n]
 			bid_val = bids[n]
 			jbid = objects_bidded[n]
 			if bid_val > best_bids[jbid]:
+				if best_bidders[jbid] == -1: # if not overwriting existing bid, increment bid counter
+					num_successful_bids += 1
+
 				best_bids[jbid] = bid_val
 				best_bidders[jbid] = i
 
-		## ASSIGNMENT PHASE
-		cdef int prev_i
-		cdef double* p = <double*> self.p.data
 
+		## ASSIGNMENT PHASE
+		cdef int prev_i, assignment_idx, bid_ctr
 		cdef size_t people_to_unassign_ctr = 0 # counter of how many people have been unassigned
 		cdef size_t people_to_assign_ctr = 0 # counter of how many people have been assigned
 
-		t0 = perf_counter()
+		bid_ctr = 0
 		for j in range(self.num_cols):
 			i = best_bidders[j]
 			if i != -1:
 				p[j] = best_bids[j]
+				assignment_idx = person_to_assignment_idx[i]
 
 				# unassign previous i (if any)
-				prev_i = o2p[j]
+				prev_i = object_to_person[j]
 				if prev_i != -1:
 					people_to_unassign_ctr += 1
-					p2o[prev_i] = -1
+					person_to_object[prev_i] = -1
+
+					# let old i take new i's place in unassigned people list for faster reading
+					person_to_assignment_idx[i] = -1
+					person_to_assignment_idx[prev_i] = assignment_idx
+					unassigned_people[assignment_idx] = prev_i
+
+				else:
+					unassigned_people[assignment_idx] = -1 # store empty space in assignment list
+					person_to_assignment_idx[i] = -1
 
 				# make new assignment
 				people_to_assign_ctr += 1
-				p2o[i] = j
-				o2p[j] = i
+				person_to_object[i] = j
+				object_to_person[j] = i
 
 				# bid has been processed, reset best bids store to -1
 				best_bidders[j] = -1
 				best_bids[j] = -1
 
+				# keep track of number of bids. Stop early if reached all bids
+				bid_ctr += 1
+				if bid_ctr >= num_successful_bids:
+					break
+
 		self.num_unassigned += people_to_unassign_ctr - people_to_assign_ctr
-		self.debug_timer['forbids'] += perf_counter()-t0
+		push_all_left(unassigned_people, person_to_assignment_idx, self.num_unassigned, N)
+
 
 	cdef int is_optimal(self):
 		"""Checks if current solution is a complete solution that satisfies eps-complementary slackness.
@@ -350,6 +417,7 @@ cdef class AuctionSolver:
 		cdef long[:] person_to_object = self.person_to_object
 		cdef long[:] flat_j = self.flat_j
 		cdef double[:] val = self.val
+		cdef double cost
 
 
 		for i in range(self.num_rows):
