@@ -4,8 +4,6 @@ from time import perf_counter
 from matplotlib import pyplot as plt
 import matplotlib.ticker as mtick
 
-import pyximport
-pyximport.install(setup_args=dict(include_dirs=[np.get_include()]), language_level=3)
 from sslap.auction import from_matrix as auction_from_matrix
 from scipy.optimize import linear_sum_assignment
 

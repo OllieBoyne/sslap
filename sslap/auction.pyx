@@ -5,6 +5,8 @@ from time import perf_counter
 from cython.parallel import prange
 from libc.stdlib cimport malloc, free
 
+#define NPY_NO_DEPRECATED_API NPY_1_7_API_VERSION
+
 
 np.import_array()
 

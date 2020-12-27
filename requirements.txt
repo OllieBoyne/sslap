@@ -2,4 +2,4 @@ numpy
 matplotlib
 tqdm
 scipy
-pyximport
+cython

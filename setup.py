@@ -1,41 +1,53 @@
-
-# OPTIONAL. HERE, CHANGE USE_CYTHON TO TRUE IF YOU HAVE EDITED AUCTION.PYX, AND WANT THAT TO BE COMPILED INSTEAD
-USE_CYTHON = False
-
-if USE_CYTHON:
-	try:
-		from Cython.Distutils import build_ext
-	except ImportError:
-		raise ImportError("USE_CYTHON set to True, but Cython installation not found.")
-
-import sys
 from setuptools import setup
-from setuptools import Extension
+from Cython.Build import cythonize
+import numpy as np
+from distutils.extension import Extension
+import logging
+import sys
+
+with open('requirements.txt') as f:
+	requirements = f.read().splitlines()
+
+# Set up the logging environment
+logging.basicConfig()
+log = logging.getLogger()
+
+# Check Cython installation
+try:
+	from Cython.Build import cythonize
+except:
+	log.critical(
+		'Cython.Build.cythonize not found. '
+		'Cython is required to build from a repo.')
+	sys.exit(1)
+
+# Extension options
+include_dirs = []
+try:
+	import numpy
+	include_dirs.append(numpy.get_include())
+except ImportError:
+	log.critical('Numpy and its headers are required to run setup(). Exiting')
+	sys.exit(1)
 
 
-if sys.version_info[0] == 2:
-	raise Exception('Python 2 is not supported')
-
-cmdclass = { }
-ext_modules = [ ]
-
-# compile cython
-if USE_CYTHON:
-	ext_modules += [Extension('sslap.auction', ['sslap/auction.pyx'])]
-	cmdclass.update({'build_ext': build_ext})
-else:
-	ext_modules += [Extension('sslap.auction', ['sslap/auction.c'])]
+opts = dict(
+	include_dirs=include_dirs,
+)
+ext_modules = cythonize([
+	Extension(
+		'sslap.auction', ['sslap/auction.pyx'], **opts),
+])
 
 setup(
-    name='sslap',
-    version='0.1',
-    description='Super Sparse Linear Assignment Problems Solver',
-    author='Ollie Boyne',
-    author_email='ollieboyne@gmail.com',
-    url='http://github.com/OllieBoyne/sslap',
-    packages=[ 'sslap', ],
-    cmdclass = cmdclass,
-    ext_modules=ext_modules,
-    license="MIT",
-    keywords='super sparse linear assignment problem solve lap auction algorithm',
+	name='sslap',
+	version='0.1',
+	description='Super Sparse Linear Assignment Problems Solver',
+	author_email='ollieboyne@gmail.com',
+	url='http://github.com/OllieBoyne/sslap',
+	author='Ollie Boyne',
+	ext_modules = ext_modules,
+	install_requires=requirements,
+	license="MIT",
+	keywords='super sparse linear assignment problem solve lap auction algorithm',
 )
