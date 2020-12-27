@@ -18,6 +18,6 @@ TODO
 
 ##Benchmarking
 
-TODO
+![](figs/density_benchmarking.png)
 
 
