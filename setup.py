@@ -34,9 +34,6 @@ setup(
     author_email='ollieboyne@gmail.com',
     url='http://github.com/OllieBoyne/sslap',
     packages=[ 'sslap', ],
-    package_dir={
-        'sslap' : 'python3/simplerandom',
-    },
     cmdclass = cmdclass,
     ext_modules=ext_modules,
     license="MIT",

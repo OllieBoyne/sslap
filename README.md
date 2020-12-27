@@ -12,11 +12,11 @@ This library provides two algorithms:
 
 Both of these problems are implemented in Cython, with a pure Python implementation of the Hungarian algorithm also provided.
 
-##Installation
+## Installation
 
 TODO 
 
-##Benchmarking
+## Benchmarking
 
 ![](figs/density_benchmarking.png)
 
