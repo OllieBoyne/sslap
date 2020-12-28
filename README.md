@@ -14,10 +14,13 @@ Both of these problems are implemented in Cython, with a pure Python implementat
 
 ## Installation
 
-TODO 
+```pip install -e .```
 
 ## Benchmarking
 
 ![](figs/density_benchmarking.png)
 
+## Notes
+
+- A matrix passed into from_matrix requires positive values only, and -1 indicates invalid values.
 

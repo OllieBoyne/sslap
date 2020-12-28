@@ -4,6 +4,7 @@ cimport numpy as np
 from time import perf_counter
 from cython.parallel import prange
 from libc.stdlib cimport malloc, free
+from sslap.feasibility cimport hopcroft_solve
 
 #define NPY_NO_DEPRECATED_API NPY_1_7_API_VERSION
 
@@ -37,7 +38,7 @@ cdef np.ndarray[np.int_t, ndim=1] cumulative_idxs(np.ndarray[np.int_t, ndim=1] a
 			value += 1
 			out[value] = i # set start of new value to i
 
-	out[value+1] = i # add on last value's stop
+	out[value+1] = i+1 # add on last value's stop (one after to match convention of loop)
 	return out
 
 @cython.boundscheck(False)
@@ -500,6 +501,12 @@ cpdef AuctionSolver from_matrix(np.ndarray mat, str problem='min', float eps_sta
 	cdef np.ndarray[DTYPE_t, ndim=1] cropped_val = val_padded[:ctr]
 
 	if ctr < N:
-		raise ValueError("Matrix is infeasible")
+		raise ValueError(f"Matrix is infeasible - Fewer than {N} valid values provided for {N} rows.")
+
+	cdef int cardinality = hopcroft_solve(cropped_loc, N, M)
+	if cardinality < N:
+		raise ValueError(f"Matrix is infeasible (Maximum matching possible only involves {cardinality} out of {N} rows.)")
+
+
 
 	return AuctionSolver(cropped_loc, cropped_val, problem=problem, eps_start=eps_start, max_iter=max_iter)

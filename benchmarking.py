@@ -127,8 +127,8 @@ def evaluate(*funcs, sizes=100, densities=1., mode='float', name='example'):
 
 	plt.legend()
 	plt.tight_layout()
-	plt.savefig(f'figs/{name}.png', dpi=300)
-	# plt.show()
+	# plt.savefig(f'figs/{name}.png', dpi=300)
+	plt.show()
 
 
 if __name__ == '__main__':

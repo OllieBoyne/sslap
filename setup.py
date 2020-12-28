@@ -37,7 +37,10 @@ opts = dict(
 ext_modules = cythonize([
 	Extension(
 		'sslap.auction', ['sslap/auction.pyx'], **opts),
-])
+	Extension(
+		'sslap.feasibility', ['sslap/feasibility.pyx'], ** opts)
+]
+)
 
 setup(
 	name='sslap',
