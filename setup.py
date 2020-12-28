@@ -42,10 +42,15 @@ ext_modules = cythonize([
 ]
 )
 
+with open("README.md", "r", encoding="utf-8") as fh:
+	long_description = fh.read()
+
 setup(
 	name='sslap',
 	version='0.1',
 	description='Super Sparse Linear Assignment Problems Solver',
+	long_description=long_description,
+	long_description_content_type="text/markdown",
 	author_email='ollieboyne@gmail.com',
 	url='http://github.com/OllieBoyne/sslap',
 	author='Ollie Boyne',

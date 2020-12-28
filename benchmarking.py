@@ -6,11 +6,13 @@ import matplotlib.ticker as mtick
 
 from sslap.auction import from_matrix as auction_from_matrix
 from scipy.optimize import linear_sum_assignment
+from typing import Union
 
 from tqdm import tqdm
 
 seed = 1
 problem = 'max'
+
 
 def _improve_feasibility(mask):
 	"""Ensure every row and column has at least one element labelled False, for valid connections"""
@@ -33,8 +35,7 @@ class Benchmark:
 			np.random.seed(seed)
 			mat = np.random.uniform(0., 100., size=(size, size)).astype(np.float)
 
-
-		np.random.seed(seed+1)  # alter seed for selecting randomly
+		np.random.seed(seed + 1)  # alter seed for selecting randomly
 		mask = np.random.random(mat.shape) > density  # make matrix sparse based on density
 		mask = _improve_feasibility(mask)
 		mat[mask] = -1
@@ -52,14 +53,14 @@ class Benchmark:
 		sol, meta = func(self.mat)
 		t1 = perf_counter()
 
-		selected_vals = self.mat[np.arange(self.size), sol] # values selected by assignment
+		selected_vals = self.mat[np.arange(self.size), sol]  # values selected by assignment
 
 		data = dict(
 			func_name=func.__name__,
 			elapsed=t1 - t0,
-			complete_assignment=(np.unique(sol).size==self.size, (sol>=0).all(), (sol<self.size).all()),
+			complete_assignment=(np.unique(sol).size == self.size, (sol >= 0).all(), (sol < self.size).all()),
 			valid_assignment=(selected_vals >= 0).all(),
-			objective_func = selected_vals.sum(),
+			objective_func=selected_vals.sum(),
 		)
 
 		if isinstance(meta, dict):
@@ -75,13 +76,14 @@ def auction_solve(mat):
 
 
 def scipy_solve(mat):
-	scipy_mat = (1/mat).copy() if problem == 'max' else mat.copy()
+	scipy_mat = (1 / mat).copy() if problem == 'max' else mat.copy()
 	scipy_mat[scipy_mat < 0] = np.inf
 	R, C = linear_sum_assignment(scipy_mat)
 	return C, None
 
 
-def evaluate(*funcs, sizes=100, densities=1., mode='float', name='example'):
+def evaluate(*funcs, sizes: Union[float, np.ndarray] = 100, densities: Union[float, np.ndarray] = 1., mode='float',
+			 name='example', log=True):
 	"""Complete speed tests for all functions, for a range of sizes, and fixed density.
 	One of sizes and density must be an ndarray"""
 
@@ -92,6 +94,14 @@ def evaluate(*funcs, sizes=100, densities=1., mode='float', name='example'):
 	iterable = sizes if xaxis == 'sizes' else densities
 
 	fig, ax = plt.subplots(figsize=(8, 5))
+	plot_func = ax.plot
+	leftmin = 0
+	if log:
+		if xaxis == 'sizes':
+			plot_func = ax.loglog
+			leftmin = None
+		else:
+			plot_func = ax.semilogy
 
 	with tqdm(iterable) as tqdm_it:
 		for val in tqdm_it:
@@ -107,33 +117,32 @@ def evaluate(*funcs, sizes=100, densities=1., mode='float', name='example'):
 					res = benchmark(f)
 					data[res['func_name']] = data.get(res['func_name'], []) + [res['elapsed']]
 
-			except ValueError as e: # infeasible cost mat
+			except ValueError as e:  # infeasible cost mat
 				continue
 
 			xdata.append(val)
 
 		for k, v in data.items():
-			ax.plot(xdata, 1000*np.array(v), "-o", label=k.replace("_", " ").title(), ms=2.)
+			plot_func(xdata, 1000 * np.array(v), "-o", label=k.replace("_", " ").title(), ms=2.)
 
 	# axis formatting
 	ax.set_xlabel(xaxis.title())
 	ax.set_ylabel("Algorithm runtime, ms")
-	title = f'Assignment solve, matrix size = {sizes}' if xaxis == 'density' else f'Assignment solve, matrix density = {densities*100:.1f}%'
+	title = f'Assignment solve, matrix size = {sizes}' if xaxis == 'density' else f'Assignment solve, matrix density = {densities * 100:.1f}%'
 	ax.set_title(title)
 
-	ax.set_xlim(left=0, right=1. if xaxis == 'density' else sizes.max())
-	ax.set_ylim(bottom=0)
-	ax.xaxis.set_major_formatter(mtick.PercentFormatter(1.))
+	ax.set_xlim(left=leftmin, right=1. if xaxis == 'density' else sizes.max())
+	if not log:
+		ax.set_ylim(bottom=0)
+
+	if xaxis=='density':
+		ax.xaxis.set_major_formatter(mtick.PercentFormatter(1.))
 
 	plt.legend()
 	plt.tight_layout()
-	# plt.savefig(f'figs/{name}.png', dpi=300)
-	plt.show()
+	plt.savefig(f'figs/{name}.png', dpi=300)
 
 
 if __name__ == '__main__':
-	# evaluate_by_size(scipy_solve, auction_solve, sizes= (10 * 1.3 ** np.arange(20)).astype(np.int), densities=0.05)
-	# evaluate_by_size(scipy_solve, auction_solve, sizes=1000*np.arange(10).astype(np.int), densities=0.01)
-	# evaluate_by_size(scipy_solve, auction_solve, sizes=5000, densities=0.01*1.2**np.arange(20))
-	evaluate(scipy_solve, auction_solve, sizes=1000, densities=np.linspace(0.01, 1, 100),
-			 name='density_benchmarking')
+	evaluate(scipy_solve, auction_solve, sizes=np.logspace(1, 4, 20).astype(np.int), densities=1., name='size_benchmarking')
+	evaluate(scipy_solve, auction_solve, sizes=1000, densities=np.linspace(0.01, 1, 100), name='density_benchmarking')
