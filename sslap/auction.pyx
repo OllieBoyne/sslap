@@ -4,7 +4,7 @@ cimport numpy as np
 from time import perf_counter
 from cython.parallel import prange
 from libc.stdlib cimport malloc, free
-from sslap.feasibility cimport hopcroft_solve
+from sslap.feasibility cimport c_hopcroft_solve as hopcroft_solve
 
 #define NPY_NO_DEPRECATED_API NPY_1_7_API_VERSION
 
@@ -536,7 +536,6 @@ cpdef AuctionSolver from_matrix(np.ndarray mat, str problem='min', float eps_sta
 	cdef double* val = <double*> val_padded.data
 	cdef double[:, :] matmv = mat
 
-	t0 = perf_counter()
 	for r in range(N):
 		for c in range(M):
 			v = matmv[r, c]

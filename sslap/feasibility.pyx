@@ -47,6 +47,16 @@ cdef int* to_pointer(long[:] mv, size_t N):
 		out[i] = mv[i]
 	return out
 
+@cython.boundscheck(False)
+@cython.wraparound(False)
+@cython.nonecheck(False)
+cdef np.ndarray[ndim=1, dtype=np.int_t] pointer_to_ndarray(int* arr, size_t N):
+	"""Convert 1D cython pointer (length N, type int) to int ndarray"""
+	cdef np.ndarray[ndim=1, dtype=np.int_t] out = np.empty(N, dtype=np.int)
+	cdef int i
+	for i in range(N):
+		out[i] = arr[i]
+	return out
 
 @cython.boundscheck(False)
 @cython.wraparound(False)
@@ -73,7 +83,7 @@ cdef double* fill_double(size_t N, double v):
 cdef float inf = float('inf')
 
 #### Implementation of the Hopcroft-Karp Algorithm
-cdef class HopcroftKarpSolver:
+cdef class HopcroftKarpSolverCython:
 
 	cdef int* all_v
 	cdef int* start_stops
@@ -81,9 +91,9 @@ cdef class HopcroftKarpSolver:
 	cdef int* Pair_V
 	cdef double* Dist
 	cdef double dist_nil
-	cdef int dfs
 	cdef int matching
 	cdef size_t N, M
+	cdef int solved
 
 	def __init__(self,	long[:, :] loc, size_t N, size_t M):
 		"""loc: a K x 2 array of (u, v) matchings.
@@ -103,8 +113,7 @@ cdef class HopcroftKarpSolver:
 
 		self.dist_nil = inf
 		self.matching = 0
-
-		self.solve()
+		self.solved = 0
 
 
 	cdef void breadth_first_search(self,):
@@ -189,8 +198,90 @@ cdef class HopcroftKarpSolver:
 					if self.depth_first_search(u):
 						self.matching += 1
 
+		self.solved = 1
 		return self.matching
 
-cdef int hopcroft_solve(long[:, :] loc, size_t N, size_t M):
-	solver = HopcroftKarpSolver(loc, N, M)
+	cdef dict result(self):
+		"""Return dictionary of data from matching"""
+		if not self.solved:
+			self.solve()
+
+		cdef dict out = dict(size = self.matching, left_pairings = pointer_to_ndarray(self.Pair_U, self.N),
+							 right_pairings = pointer_to_ndarray(self.Pair_V, self.M))
+
+		return out
+
+cdef int c_hopcroft_solve(long[:, :] loc, size_t N, size_t M):
+	solver = HopcroftKarpSolverCython(loc, N, M)
 	return solver.solve()
+
+cpdef hopcroft_solve(np.ndarray loc=None,
+						 np.ndarray mat=None,
+						 dict lookup=None):
+	"""Cython/Python callable function to return a maximum matching of a bipartite graph, with sets I and J.
+	Can receive one of 3 data types as input:
+	
+	loc: A (E x 2) integer ndarray, where each row gives the (i, j)th value of a single edge
+	mat: 2D ndarray of floats, where A_ij >= 0 indicates a valid connection between i and j (negative for invalid values)
+	lookup: A dictionary where key i gives a list/ndarray of valid connections to J
+	
+	returns a dictionary of:
+		size: the number of edges included in the maximum matching
+		left_pairings: An array of size |I|, where the ith entry gives the vertex in J which connects to I
+		right_pairings: An array of size |J|, where the jth entry gives the vertex in I which connects to J
+	
+	for left_ and right_pairings, a value of -1 indicates that that vertex is not connected.
+	"""
+
+	n_None = (loc is None) + (mat is None) + (lookup is None)
+	assert n_None == 2, "Exactly one of the arguments loc, mat, lookup must be provided."
+
+	cdef long[:, :] proc_loc # object to be sent to solver
+	cdef size_t N, M, E, max_entries
+	cdef int ctr
+
+	# for matrix form
+	cdef np.ndarray[np.int_t, ndim=2] loc_padded
+	cdef long[:, :] locmv
+	cdef double[:, :] matmv
+
+	if loc is not None:
+		N = loc[:, 0].max() + 1
+		M = loc[:, 1].max() + 1
+		proc_loc = loc
+
+	elif mat is not None:
+		N = mat.shape[0]
+		M = mat.shape[1]
+		max_entries = N * M
+		loc_padded = np.empty((max_entries,2), dtype=np.int, order='C')
+		locmv = loc_padded
+		matmv = mat
+
+		ctr = 0
+		for r in range(N):
+			for c in range(M):
+				v = matmv[r, c]
+				if v >= 0: # if valid entry
+					locmv[ctr, 0] = r
+					locmv[ctr, 1] = c
+					ctr = ctr + 1
+
+		proc_loc = loc_padded[:ctr] # crop to only valid values
+
+	elif lookup is not None:
+		N = max(lookup) + 1 # number of elements in I
+		M = max(map(max, lookup.values())) + 1 # number of elements in J
+		E = sum(map(len, lookup.values()))  # number of total edges
+		proc_loc = np.empty((E, 2), dtype=np.int)
+
+		ctr = 0
+		for i in lookup:
+			for j in lookup[i]:
+				proc_loc[ctr, 0] = i
+				proc_loc[ctr, 1] = j
+				ctr += 1
+
+	# create solver
+	cdef HopcroftKarpSolverCython solver = HopcroftKarpSolverCython(proc_loc, N, M)
+	return solver.result()
