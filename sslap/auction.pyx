@@ -181,7 +181,7 @@ cdef class AuctionSolver:
 	cdef int optimal_soln_found
 	cdef public dict meta
 	cdef float extreme
-	cdef dict debug_timer
+	cdef dict timer
 
 	cdef double* best_bids
 	cdef int* best_bidders
@@ -196,7 +196,7 @@ cdef class AuctionSolver:
 				 size_t  num_rows=0, size_t num_cols=0, str problem='min',
 				 size_t max_iter=1000000, float eps_start=0):
 
-		self.debug_timer = {'setup':0, 'solve':0}
+		self.timer = {'setup':0, 'solve':0}
 		t0 = perf_counter()
 
 		cdef size_t N = loc[:, 0].max() + 1
@@ -255,7 +255,7 @@ cdef class AuctionSolver:
 
 		self.optimal_soln_found = False
 		self.meta = {'start_eps': round(self.eps,3)}
-		self.debug_timer['setup'] += perf_counter() - t0
+		self.timer['setup'] += perf_counter() - t0
 
 
 	cpdef np.ndarray solve(self):
@@ -284,7 +284,7 @@ cdef class AuctionSolver:
 
 				self.nreductions += 1
 
-		self.debug_timer['solve'] += perf_counter() - tstartsolve
+		self.timer['solve'] += perf_counter() - tstartsolve
 
 		# Finished, validate soln
 		self.meta['eCE'] = self.eCE_satisfied(eps=self.target_eps)
@@ -294,7 +294,7 @@ cdef class AuctionSolver:
 		self.meta['n_assigned'] = self.num_rows - self.num_unassigned
 		self.meta['obj'] = round(self.get_obj(), 3)
 		self.meta['final_eps'] = round(self.eps, 3)
-		self.meta['debug_timer'] = {k:f"{1000 * v:.2f}ms" for k, v in self.debug_timer.items()}
+		self.meta['timer'] = {k:f"{1000 * v:.2f}ms" for k, v in self.timer.items()}
 
 		return self.person_to_object
 
@@ -518,7 +518,7 @@ cdef class AuctionSolver:
 
 @cython.boundscheck(False)
 @cython.wraparound(False)
-cpdef AuctionSolver from_matrix(np.ndarray mat, str problem='min', float eps_start=0,
+cpdef AuctionSolver _from_matrix(np.ndarray mat, str problem='min', float eps_start=0,
 								size_t max_iter = 1000000, fast=False):
 	# Return an Auction Solver from a dense matrix (M, N), where invalid values are -1
 	cdef size_t N = mat.shape[0]
