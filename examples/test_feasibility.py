@@ -1,6 +1,6 @@
 """Check the feasibility of a bipartite graph by using SSLAP's feasibility module"""
 import numpy as np
-from sslap.feasibility import hopcroft_solve
+from sslap import hopcroft_solve
 
 
 # All 3 methods will use the same input bipartite graph:

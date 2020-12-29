@@ -1,6 +1,6 @@
 """Perform Auction Algorithm on small matrix"""
 import numpy as np
-from sslap.auction import auction_solve
+from sslap import auction_solve
 
 
 def dense():
