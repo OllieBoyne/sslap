@@ -4,7 +4,7 @@ from time import perf_counter
 from matplotlib import pyplot as plt
 import matplotlib.ticker as mtick
 
-from sslap.auction import from_matrix as auction_from_matrix
+from sslap import auction_solve
 from scipy.optimize import linear_sum_assignment
 from typing import Union
 
@@ -69,13 +69,12 @@ class Benchmark:
 		return data
 
 
-def auction_solve(mat):
-	pyxMat = auction_from_matrix(mat, problem=problem)
-	s = pyxMat.solve()
-	return s, pyxMat.meta
+def run_auction(mat):
+	sol = auction_solve(mat, problem=problem)
+	return sol['sol'], sol['meta']
 
 
-def scipy_solve(mat):
+def run_scipy(mat):
 	scipy_mat = (1 / mat).copy() if problem == 'max' else mat.copy()
 	scipy_mat[scipy_mat < 0] = np.inf
 	R, C = linear_sum_assignment(scipy_mat)
@@ -144,5 +143,5 @@ def evaluate(*funcs, sizes: Union[float, np.ndarray] = 100, densities: Union[flo
 
 
 if __name__ == '__main__':
-	evaluate(scipy_solve, auction_solve, sizes=np.logspace(1, 4, 20).astype(np.int), densities=1., name='size_benchmarking')
-	evaluate(scipy_solve, auction_solve, sizes=1000, densities=np.linspace(0.01, 1, 100), name='density_benchmarking')
+	evaluate(run_scipy, run_auction, sizes=np.logspace(1, 4, 20).astype(np.int), densities=1., name='size_benchmarking')
+	evaluate(run_scipy, run_auction, sizes=1000, densities=np.linspace(0.01, 1, 100), name='density_benchmarking')
