@@ -16,6 +16,9 @@ Also provided is an implementation of the [Hopcroft-Karp Algorithm](https://en.w
 
 ## Usage
 
+- For usage of the Auction Algorithm, view `examples/test_auction.py`
+- For usage of Hopcroft-Karp, view `examples/test_feasibility.py`
+
 ## Benchmarking
 
 The algorithm is best suited for large and sparse problems, where it outperforms `scipy.optimize.linear_sum_assignment`.
