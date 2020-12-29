@@ -31,6 +31,7 @@ See below for some timed comparisons of the runtime for problems of varying dens
 ## Notes
 
 [1] Bertsekas, D. [A Distributed Algorithm for the Assignment Problem](https://www.mit.edu/~dimitrib/Orig_Auction.pdf) (1979)
+
 [2] Hopcroft J. Karp, R. An n^(5/2) algorithm for maximum matchings in bipartite graphs (1973)
 
 - A matrix passed into from_matrix requires positive values only, and -1 indicates invalid values.
