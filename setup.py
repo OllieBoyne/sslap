@@ -36,9 +36,9 @@ opts = dict(
 )
 ext_modules = cythonize([
 	Extension(
-		'sslap.auction_', ['sslap/auction.pyx'], **opts),
+		'sslap.auction_', ['sslap/auction_.pyx'], **opts),
 	Extension(
-		'sslap.feasibility_', ['sslap/feasibility.pyx'], ** opts)
+		'sslap.feasibility_', ['sslap/feasibility_.pyx'], ** opts)
 ]
 )
 
@@ -47,7 +47,7 @@ with open("README.md", "r", encoding="utf-8") as fh:
 
 setup(
 	name='sslap',
-	version='0.1.2',
+	version='0.1.3',
 	description='Super Sparse Linear Assignment Problems Solver',
 	long_description=long_description,
 	long_description_content_type="text/markdown",

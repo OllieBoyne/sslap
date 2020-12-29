@@ -4,7 +4,7 @@ cimport numpy as np
 from time import perf_counter
 from cython.parallel import prange
 from libc.stdlib cimport malloc, free
-from sslap.feasibility cimport c_hopcroft_solve as hopcroft_solve
+from sslap.feasibility_ cimport c_hopcroft_solve as hopcroft_solve
 
 #define NPY_NO_DEPRECATED_API NPY_1_7_API_VERSION
 
