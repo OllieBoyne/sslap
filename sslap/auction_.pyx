@@ -561,3 +561,43 @@ cpdef AuctionSolver _from_matrix(np.ndarray mat, str problem='min', float eps_st
 		eps_start = 1/N
 
 	return AuctionSolver(cropped_loc, cropped_val, problem=problem, eps_start=eps_start, max_iter=max_iter)
+
+@cython.boundscheck(False)
+@cython.wraparound(False)
+cpdef AuctionSolver _from_sparse(np.ndarray loc, np.ndarray val, str problem='min', float eps_start=0,
+								size_t max_iter = 1000000, fast=False, size=None):
+	"""
+	Return Auction solver for sparse entries
+	:param loc: (N x 2) x, y indices for entries in matrix
+	:param val: (N,) values in matrix
+	:param problem: 'max' or 'min'
+	:param eps_start: Starting epsilon (defaults to system estimate if not given)
+	:param max_iter: Maximum number of iterations
+	:param fast: Initialize with smallest epsilon possible for fast performance (sub-optimal solution)
+	:param size: Shape of array (2,). If not given, infers shape from loc
+	:return: 
+	"""
+
+	cdef size_t N
+	cdef size_t M
+	if size is not None:
+		M, N = size
+	else:
+		N = loc[:, 0].max()
+		M = loc[:, 1].max()
+
+	cdef size_t max_entries = N * M
+	cdef size_t num_entries = loc.shape[0]
+
+	if num_entries < N:
+		raise ValueError(f"Matrix is infeasible - Fewer than {N} valid values provided for {N} rows.")
+
+
+	cdef int cardinality = hopcroft_solve(loc, N, M)
+	if cardinality < N:
+		raise ValueError(f"Matrix is infeasible (Maximum matching possible only involves {cardinality} out of {N} rows.)")
+
+	if fast:
+		eps_start = 1/N
+
+	return AuctionSolver(loc, val, problem=problem, eps_start=eps_start, max_iter=max_iter)
