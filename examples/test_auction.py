@@ -7,7 +7,7 @@ from scipy.sparse import coo_matrix
 def dense():
 	"""Solve of a dense 5x5 matrix"""
 	np.random.seed(1)
-	mat = np.random.uniform(0, 10, (5, 5)).astype(np.float)
+	mat = np.random.uniform(0, 10, (5, 5)).astype(np.float64)
 
 	sol = auction_solve(mat, problem='min')
 
@@ -19,7 +19,7 @@ def dense():
 def sparse():
 	"""Solve a sparse 5x5 matrix using dense format"""
 	np.random.seed(1)
-	mat = np.random.uniform(0, 10, (5, 5)).astype(np.float)
+	mat = np.random.uniform(0, 10, (5, 5)).astype(np.float64)
 	np.random.seed(2)
 	mat[np.random.rand(5, 5) > 0.5] = -1  # set roughly half values to invalid
 
@@ -33,7 +33,7 @@ def sparse():
 def sparse_coo_mat():
 	"""Solve a sparse 5x5 matrix using scipy's sparse coo_matrix format"""
 	np.random.seed(1)
-	mat = np.random.uniform(0, 10, (5, 5)).astype(np.float)
+	mat = np.random.uniform(0, 10, (5, 5)).astype(np.float64)
 	np.random.seed(2)
 	mat[np.random.rand(5, 5) > 0.5] = 0  # set roughly half values to invalid (0 for scipy)
 
