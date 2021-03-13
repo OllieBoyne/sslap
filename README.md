@@ -12,7 +12,13 @@ Also provided is an implementation of the [Hopcroft-Karp Algorithm](https://en.w
 
 ## Installation
 
+Tested on Windows:
+
 ```pip install sslap```
+
+Tested on Linux:
+
+```pip install git+https://github.com/OllieBoyne/sslap.git```
 
 ## Usage
 
