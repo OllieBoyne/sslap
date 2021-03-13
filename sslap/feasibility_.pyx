@@ -7,10 +7,19 @@ from libc.stdlib cimport malloc, free
 
 np.import_array()
 
+# set the int dtype based on OS
+IF UNAME_SYSNAME == "Windows":
+	ctypedef np.int_t DTYPE_int_t
+	cdef DTYPE_int = np.int 
+	
+ELSE:
+	ctypedef np.int32_t DTYPE_int_t
+	cdef DTYPE_int = np.int32 
+
 @cython.boundscheck(False)
 @cython.wraparound(False)
 @cython.nonecheck(False)
-cdef int* cumulative_idxs(long[:] arr, size_t N):
+cdef int* cumulative_idxs(int[:] arr, size_t N):
 	"""Given an ordered set of integers 0-N, returns an array of size N+1, where each element gives the index of
 	the stop of the number / start of the next
 	eg [0, 0, 0, 1, 1, 1, 1] -> [0, 3, 7] 
@@ -39,8 +48,8 @@ cdef int* cumulative_idxs(long[:] arr, size_t N):
 @cython.boundscheck(False)
 @cython.wraparound(False)
 @cython.nonecheck(False)
-cdef int* to_pointer(long[:] mv, size_t N):
-	"""Convert 1D memory view (length N, type long) to pointer int"""
+cdef int* to_pointer(int[:] mv, size_t N):
+	"""Convert 1D memory view (length N, type int) to pointer int"""
 	cdef int* out = <int *> malloc(N*cython.sizeof(int))
 	cdef int i
 	for i in range(N):
@@ -50,9 +59,9 @@ cdef int* to_pointer(long[:] mv, size_t N):
 @cython.boundscheck(False)
 @cython.wraparound(False)
 @cython.nonecheck(False)
-cdef np.ndarray[ndim=1, dtype=np.int_t] pointer_to_ndarray(int* arr, size_t N):
+cdef np.ndarray[ndim=1, dtype=DTYPE_int_t] pointer_to_ndarray(int* arr, size_t N):
 	"""Convert 1D cython pointer (length N, type int) to int ndarray"""
-	cdef np.ndarray[ndim=1, dtype=np.int_t] out = np.empty(N, dtype=np.int)
+	cdef np.ndarray[ndim=1, dtype=DTYPE_int_t] out = np.empty(N, dtype=DTYPE_int)
 	cdef int i
 	for i in range(N):
 		out[i] = arr[i]
@@ -95,11 +104,11 @@ cdef class HopcroftKarpSolverCython:
 	cdef size_t N, M
 	cdef int solved
 
-	def __init__(self,	long[:, :] loc, size_t N, size_t M):
+	def __init__(self,	int[:, :] loc, size_t N, size_t M):
 		"""loc: a K x 2 array of (u, v) matchings.
 		N = num rows, M = num cols
 		"""
-		cdef long[:] all_u = loc[:, 0]
+		cdef int[:] all_u = loc[:, 0]
 		cdef int* all_v = to_pointer(loc[:, 1], loc.shape[0])
 		self.all_v = all_v
 		self.start_stops = cumulative_idxs(all_u, N) # idxs of start/stop for every u, v
@@ -187,7 +196,7 @@ cdef class HopcroftKarpSolverCython:
 
 		return 1
 
-	cdef solve(self):
+	cdef int solve(self):
 		while True:
 			self.breadth_first_search()
 			if self.dist_nil == inf:
@@ -211,7 +220,7 @@ cdef class HopcroftKarpSolverCython:
 
 		return out
 
-cdef int c_hopcroft_solve(long[:, :] loc, size_t N, size_t M):
+cdef int c_hopcroft_solve(int[:, :] loc, size_t N, size_t M):
 	solver = HopcroftKarpSolverCython(loc, N, M)
 	return solver.solve()
 
@@ -223,13 +232,13 @@ cpdef hopcroft_solve(np.ndarray loc=None,
 	n_None = (loc is None) + (mat is None) + (lookup is None)
 	assert n_None == 2, "Exactly one of the arguments loc, mat, lookup must be provided."
 
-	cdef long[:, :] proc_loc # object to be sent to solver
+	cdef int[:, :] proc_loc # object to be sent to solver
 	cdef size_t N, M, E, max_entries
 	cdef int ctr
 
 	# for matrix form
-	cdef np.ndarray[np.int_t, ndim=2] loc_padded
-	cdef long[:, :] locmv
+	cdef np.ndarray[DTYPE_int_t, ndim=2] loc_padded
+	cdef int[:, :] locmv
 	cdef double[:, :] matmv
 
 	if loc is not None:
@@ -241,7 +250,7 @@ cpdef hopcroft_solve(np.ndarray loc=None,
 		N = mat.shape[0]
 		M = mat.shape[1]
 		max_entries = N * M
-		loc_padded = np.empty((max_entries,2), dtype=np.int, order='C')
+		loc_padded = np.empty((max_entries,2), dtype=DTYPE_int, order='C')
 		locmv = loc_padded
 		matmv = mat
 
@@ -260,7 +269,7 @@ cpdef hopcroft_solve(np.ndarray loc=None,
 		N = max(lookup) + 1 # number of elements in I
 		M = max(map(max, lookup.values())) + 1 # number of elements in J
 		E = sum(map(len, lookup.values()))  # number of total edges
-		proc_loc = np.empty((E, 2), dtype=np.int)
+		proc_loc = np.empty((E, 2), dtype=DTYPE_int)
 
 		ctr = 0
 		for i in lookup:

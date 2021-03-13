@@ -1,6 +1,7 @@
 cimport cython
 import numpy as np
 cimport numpy as np
+import sys
 from time import perf_counter
 from cython.parallel import prange
 from libc.stdlib cimport malloc, free
@@ -14,16 +15,22 @@ np.import_array()
 # tolerance to deal with floating point precision for eCE, due to eps being stored as float 32
 cdef double tol = 1e-7
 
-# ctypedef np.int_t DTYPE_t
 cdef DTYPE = np.float
 ctypedef np.float_t DTYPE_t
 cdef float inf = float('infinity')
 
+# set the int dtype based on OS
+IF UNAME_SYSNAME == "Windows":
+	ctypedef np.int_t DTYPE_int_t
+	cdef DTYPE_int = np.int 
+ELSE:
+	ctypedef np.int32_t DTYPE_int_t
+	cdef DTYPE_int = np.int32 
 
 @cython.boundscheck(False)
 @cython.wraparound(False)
 @cython.nonecheck(False)
-cdef int* cumulative_idxs(np.ndarray[np.int_t, ndim=1] arr, size_t N):
+cdef int* cumulative_idxs(np.ndarray[DTYPE_int_t, ndim=1] arr, size_t N):
 	"""Given an ordered set of integers 0-N, returns an array of size N+1, where each element gives the index of
 	the stop of the number / start of the next
 	eg [0, 0, 0, 1, 1, 1, 1] -> [0, 3, 7] """
@@ -77,7 +84,7 @@ cdef double* fill_float(size_t N, double v):
 @cython.boundscheck(False)
 @cython.wraparound(False)
 @cython.nonecheck(False)
-cdef int* to_int_pointer(np.ndarray[ndim=1, dtype=np.int_t] arr):
+cdef int* to_int_pointer(np.ndarray[ndim=1, dtype=DTYPE_int_t] arr):
 	"""Converts 1D ndarray to 1D int pointer"""
 	cdef size_t N = arr.size
 	cdef int[:] arrmv = arr
@@ -192,7 +199,7 @@ cdef class AuctionSolver:
 	cdef int* unassigned_people
 	cdef int* person_to_assignment_idx
 
-	def __init__(self, np.ndarray[np.int_t, ndim=2] loc, np.ndarray[DTYPE_t, ndim=1] val,
+	def __init__(self, np.ndarray[DTYPE_int_t, ndim=2] loc, np.ndarray[DTYPE_t, ndim=1] val,
 				 size_t  num_rows=0, size_t num_cols=0, str problem='min',
 				 size_t max_iter=1000000, float eps_start=0):
 
@@ -221,8 +228,8 @@ cdef class AuctionSolver:
 		# indices of all j values, to be indexed by self.i_starts_stops
 		self.flat_j = to_int_pointer(loc[:, 1])
 
-		self.person_to_object = np.full(N, dtype=np.int, fill_value=-1)
-		self.object_to_person = np.full(M, dtype=np.int, fill_value=-1)
+		self.person_to_object = np.full(N, dtype=DTYPE_int, fill_value=-1)
+		self.object_to_person = np.full(M, dtype=DTYPE_int, fill_value=-1)
 
 		cdef int multiplier = (self.num_rows+1) # premultiply array by this so eps=1 indicates termination
 
@@ -444,7 +451,7 @@ cdef class AuctionSolver:
 		cdef double* p = self.p
 		cdef int* j_counts = self.j_counts
 		cdef int* i_starts_stops = self.i_starts_stops
-		cdef long[:] person_to_object = self.person_to_object
+		cdef int[:] person_to_object = self.person_to_object
 		cdef int* flat_j = self.flat_j
 		cdef double[:] val = self.val
 		cdef double cost
@@ -488,7 +495,7 @@ cdef class AuctionSolver:
 
 		cdef int* j_counts = self.j_counts
 		cdef int* i_starts_stops = self.i_starts_stops
-		cdef long[:] person_to_object = self.person_to_object
+		cdef int[:] person_to_object = self.person_to_object
 		cdef int* flat_j = self.flat_j
 		cdef double[:] val = self.val
 
@@ -521,18 +528,18 @@ cdef class AuctionSolver:
 cpdef AuctionSolver _from_matrix(np.ndarray mat, str problem='min', float eps_start=0,
 								size_t max_iter = 1000000, fast=False):
 	# Return an Auction Solver from a dense matrix (M, N), where invalid values are -1
-	cdef size_t N = mat.shape[0]
-	cdef size_t M = mat.shape[1]
+	cdef int N = mat.shape[0]
+	cdef int M = mat.shape[1]
 	cdef size_t max_entries = N * M
 	cdef size_t ctr = 0
 	cdef double v
 
 
-	cdef np.ndarray[np.int_t, ndim=2] loc_padded = np.empty((max_entries,2), dtype=np.int, order='C')
+	cdef np.ndarray[DTYPE_int_t, ndim=2] loc_padded = np.empty((max_entries,2), dtype=DTYPE_int, order='C')
 	cdef np.ndarray[DTYPE_t, ndim=1] val_padded = np.empty((max_entries,), dtype=DTYPE, order='C')
 
 
-	cdef long[:, :] loc = loc_padded
+	cdef int[:, :] loc = loc_padded
 	cdef double* val = <double*> val_padded.data
 	cdef double[:, :] matmv = mat
 
@@ -546,17 +553,16 @@ cpdef AuctionSolver _from_matrix(np.ndarray mat, str problem='min', float eps_st
 				ctr = ctr + 1
 
 	# Now crop to only processed entries
-	cdef np.ndarray[np.int_t, ndim=2] cropped_loc = loc_padded[:ctr]
+	cdef np.ndarray[DTYPE_int_t, ndim=2] cropped_loc = loc_padded[:ctr]
 	cdef np.ndarray[DTYPE_t, ndim=1] cropped_val = val_padded[:ctr]
 
 	if ctr < N:
 		raise ValueError(f"Matrix is infeasible - Fewer than {N} valid values provided for {N} rows.")
 
-
 	cdef int cardinality = hopcroft_solve(cropped_loc, N, M)
 	if cardinality < N:
 		raise ValueError(f"Matrix is infeasible (Maximum matching possible only involves {cardinality} out of {N} rows.)")
-
+	
 	if fast:
 		eps_start = 1/N
 
@@ -577,20 +583,19 @@ cpdef AuctionSolver _from_sparse(np.ndarray loc, np.ndarray val, str problem='mi
 	:param size: Shape of array (2,). If not given, infers shape from loc
 	:return: 
 	"""
-
-	cdef size_t N
-	cdef size_t M
+	cdef int N
+	cdef int M
 	if size is not None:
 		M, N = size
 	else:
 		N = loc[:, 0].max()
 		M = loc[:, 1].max()
 
-	cdef size_t max_entries = N * M
-	cdef size_t num_entries = loc.shape[0]
+	cdef int max_entries = N * M
+	cdef int num_entries = loc.shape[0]
 
 	# cast to correct types
-	cdef np.ndarray[np.int_t, ndim=2] loc_long = loc.astype(np.int_)
+	cdef np.ndarray[DTYPE_int_t, ndim=2] loc_long = loc.astype(DTYPE_int)
 	cdef np.ndarray[DTYPE_t, ndim=1] val_float = val
 
 	if num_entries < N:

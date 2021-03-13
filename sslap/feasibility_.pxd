@@ -1,1 +1,1 @@
-cdef int c_hopcroft_solve(long[:, :] loc, size_t N, size_t M)
+cdef int c_hopcroft_solve(int[:, :] loc, size_t N, size_t M)
