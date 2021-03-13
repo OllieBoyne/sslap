@@ -590,7 +590,7 @@ cpdef AuctionSolver _from_sparse(np.ndarray loc, np.ndarray val, str problem='mi
 	cdef size_t num_entries = loc.shape[0]
 
 	# cast to correct types
-	cdef np.ndarray[np.int_t, ndim=2] loc_long = loc.astype(np.int32)
+	cdef np.ndarray[np.int_t, ndim=2] loc_long = loc.astype(np.int_)
 	cdef np.ndarray[DTYPE_t, ndim=1] val_float = val
 
 	if num_entries < N:
