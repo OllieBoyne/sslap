@@ -526,7 +526,7 @@ cdef class AuctionSolver:
 @cython.boundscheck(False)
 @cython.wraparound(False)
 cpdef AuctionSolver _from_matrix(np.ndarray mat, str problem='min', float eps_start=0,
-								size_t max_iter = 1000000, fast=False):
+								size_t max_iter = 1000000, fast=False, cardinality_check=True):
 	# Return an Auction Solver from a dense matrix (M, N), where invalid values are -1
 	cdef int N = mat.shape[0]
 	cdef int M = mat.shape[1]
@@ -559,9 +559,11 @@ cpdef AuctionSolver _from_matrix(np.ndarray mat, str problem='min', float eps_st
 	if ctr < N:
 		raise ValueError(f"Matrix is infeasible - Fewer than {N} valid values provided for {N} rows.")
 
-	cdef int cardinality = hopcroft_solve(cropped_loc, N, M)
-	if cardinality < N:
-		raise ValueError(f"Matrix is infeasible (Maximum matching possible only involves {cardinality} out of {N} rows.)")
+	cdef int cardinality
+	if cardinality_check:
+		cardinality = hopcroft_solve(cropped_loc, N, M)
+		if cardinality < N:
+			raise ValueError(f"Matrix is infeasible (Maximum matching possible only involves {cardinality} out of {N} rows.)")
 	
 	if fast:
 		eps_start = 1/N
@@ -571,7 +573,7 @@ cpdef AuctionSolver _from_matrix(np.ndarray mat, str problem='min', float eps_st
 @cython.boundscheck(False)
 @cython.wraparound(False)
 cpdef AuctionSolver _from_sparse(np.ndarray loc, np.ndarray val, str problem='min', float eps_start=0,
-								size_t max_iter = 1000000, fast=False, size=None):
+								size_t max_iter = 1000000, fast=False, size=None, cardinality_check=True):
 	"""
 	Return Auction solver for sparse entries
 	:param loc: (N x 2) x, y indices for entries in matrix
@@ -581,6 +583,7 @@ cpdef AuctionSolver _from_sparse(np.ndarray loc, np.ndarray val, str problem='mi
 	:param max_iter: Maximum number of iterations
 	:param fast: Initialize with smallest epsilon possible for fast performance (sub-optimal solution)
 	:param size: Shape of array (2,). If not given, infers shape from loc
+	:param cardinality_check: Flag to apply cardinality check
 	:return: 
 	"""
 	cdef int N
@@ -602,9 +605,11 @@ cpdef AuctionSolver _from_sparse(np.ndarray loc, np.ndarray val, str problem='mi
 		raise ValueError(f"Matrix is infeasible - Fewer than {N} valid values provided for {N} rows.")
 
 
-	cdef int cardinality = hopcroft_solve(loc_long, N, M)
-	if cardinality < N:
-		raise ValueError(f"Matrix is infeasible (Maximum matching possible only involves {cardinality} out of {N} rows.)")
+	cdef int cardinality
+	if cardinality_check:
+		cardinality = hopcroft_solve(loc_long, N, M)
+		if cardinality < N:
+			raise ValueError(f"Matrix is infeasible (Maximum matching possible only involves {cardinality} out of {N} rows.)")
 
 	if fast:
 		eps_start = 1/N

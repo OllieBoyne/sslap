@@ -5,7 +5,7 @@ from scipy.sparse.coo import coo_matrix as CooMatrix
 
 def auction_solve(mat: np.ndarray = None, loc: np.ndarray = None, val: np.ndarray = None, coo_mat:CooMatrix=None,
 				  problem: str = 'min', eps_start: float = 0.,
-				  max_iter: int = 1000000, fast: bool = False, size=None) -> dict:
+				  max_iter: int = 1000000, fast: bool = False, size=None, cardinality_check=True) -> dict:
 	"""Solve an Auction Algorithm problem, finding an optimal assignment i -> j, such that:
 	- each i is assigned to a j
 	- the total value of mat[i, j] for all matched i and j is minimized/maximized
@@ -31,13 +31,14 @@ def auction_solve(mat: np.ndarray = None, loc: np.ndarray = None, val: np.ndarra
 	:param fast: Initialize with the smallest epsilon possible for fast performance.
 	WARNING: A SUB-OPTIMAL (BUT STILL GOOD) SOLUTION LIKELY
 	:param size: Optional tuple for matrix size - used for loc & val input. If not given, infer shape from loc.
+	:param cardinality_check: Flag to turn on cardinality check. If a segmentation fault occurs, switch this to False
 	
 	:return res: A dictionary of
 	   - sol: An array of size N, where the ith entry gives the jth object assigned to i
 	   - meta: A dictionary of meta data, including elapsed time, and number of iterations
 	"""
 
-	kw = dict(problem=problem, eps_start=eps_start, max_iter=max_iter, fast=fast)
+	kw = dict(problem=problem, eps_start=eps_start, max_iter=max_iter, fast=fast, cardinality_check=cardinality_check)
 
 	if mat is not None:
 		solver = _from_matrix(mat=mat, **kw)
