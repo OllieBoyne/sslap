@@ -36,9 +36,10 @@ See below for some timed comparisons of the runtime for problems of varying dens
 
 ## Notes
 
+- A matrix passed into from_matrix requires positive values only, and -1 indicates invalid values.
+- If the matrix is sufficiently large (experiments show N > 120k), auction_solve may crash unexpectedly. To avoid this, pass in the argument `cardinality_check=False` to auction_solve
+
 [1] Bertsekas, D. [A Distributed Algorithm for the Assignment Problem](https://www.mit.edu/~dimitrib/Orig_Auction.pdf) (1979)
 
 [2] Hopcroft J. Karp, R. An n^(5/2) algorithm for maximum matchings in bipartite graphs (1973)
-
-- A matrix passed into from_matrix requires positive values only, and -1 indicates invalid values.
 
